@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 2 complete
-> **Current phase:** Phase 3
+> **Status:** In progress — Phase 3 complete
+> **Current phase:** Phase 4
 
 ---
 
@@ -364,18 +364,18 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
 
 ### Tasks
 
-- [ ] **3.1** Install dependencies and create the lockfile
+- [x] **3.1** Install dependencies and create the lockfile
   - Runtime: `npm install pino pino-http prom-client`
   - Dev: `npm install -D typescript @types/node '@types/express@^4' @types/better-sqlite3 tsx vitest @vitest/coverage-v8 supertest @types/supertest aws-sdk-client-mock`
   - **`@types/express` must be pinned to `^4`** (Design Decision P12). Its `latest` tag is the 5.x line while `package.json` pins `express: ^4.21.2`; unpinned typings describe Express 5's `req.query` and handler return types over an Express 4 runtime, and the resulting errors surface far from their cause.
   - This creates `package-lock.json` (design §1 — required for `npm ci` in CI and Docker). Commit it.
   - `busboy`, `uuid`, and both `@aws-sdk/*` packages ship their own types — do not add `@types/*` for them.
 
-- [ ] **3.2** Confirm `better-sqlite3` loads under the host's Node before writing any test that depends on it
+- [x] **3.2** Confirm `better-sqlite3` loads under the host's Node before writing any test that depends on it
   - `node -e "const D=require('better-sqlite3'); new D(':memory:').exec('create table t(a)'); console.log('ok', process.version)"`
   - Record the host Node version in Observations. The container is pinned to `node:20-alpine`; the host may be newer, and the whole unit suite runs on the host.
 
-- [ ] **3.3** Add npm scripts
+- [x] **3.3** Add npm scripts
   - File: `package.json`
   - Add exactly the design §1 script block, **except** leave `"start": "node server.js"` and `"main": "server.js"` untouched — Phase 16 flips them at cutover, so the repo stays runnable at every phase boundary.
     ```json
@@ -387,13 +387,13 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
     "test:coverage": "vitest run --coverage"
     ```
 
-- [ ] **3.4** Add the TypeScript configs
+- [x] **3.4** Add the TypeScript configs
   - Files: `tsconfig.json`, `tsconfig.build.json`
   - `tsconfig.json`: `target: ES2022`, `module: commonjs`, `moduleResolution: node`, `strict: true`, `noUncheckedIndexedAccess: true`, `esModuleInterop: true`, `resolveJsonModule: true`, `sourceMap: true`, `declaration: false`, `skipLibCheck: true`, `include: ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]`.
   - `tsconfig.build.json`: `extends: "./tsconfig.json"`, `compilerOptions: { rootDir: "src", outDir: "dist", resolveJsonModule: false }`, `include: ["src/**/*.ts"]`.
   - **`rootDir: "src"` is load-bearing** (Design Decision P4). Tests may import golden JSON fixtures, which is why `resolveJsonModule` is on for the dev config — but it is **off** for the build config, and Phase 4's `getVersion()` reaches `package.json` through an untyped `require`. A typed JSON import from `src/` widens the inferred root and silently emits `dist/src/index.js`, breaking `CMD ["node", "dist/index.js"]`.
 
-- [ ] **3.5** Add the Vitest config
+- [x] **3.5** Add the Vitest config
   - File: `vitest.config.ts`
     ```ts
     import { defineConfig } from 'vitest/config';
@@ -412,15 +412,15 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
     });
     ```
 
-- [ ] **3.6** Update `.gitignore`
+- [x] **3.6** Update `.gitignore`
   - Add `dist/`, `coverage/`, `*.tsbuildinfo`.
 
-- [ ] **3.7** Define the shared type surface
+- [x] **3.7** Define the shared type surface
   - File: `src/types.ts`
   - Interfaces only, no runtime code: `Config`, `Deps` (`{ config, logger, metrics, db, ses }`), `Db`, `SesClient`, `Metrics`, `Stats`, `TableCounts`, `SesEvent`, `NormalizedEvent`, `LogLevel`.
   - `NormalizedEvent` mirrors `lib/event-mapper.js`'s return shape exactly: `event_type`, `severity`, `recipient`, `timestamp`, `ses_message_id`, `ghost_email_id`, `batch_message_id`, `delivery_status_code`, `delivery_status_message`, `delivery_status_enhanced`, `is_suppression`, `suppression_type`, `suppression_reason`.
 
-- [ ] **3.8** Implement config loading
+- [x] **3.8** Implement config loading
   - File: `src/config.ts`
   - `export class ConfigError extends Error` and `export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config`.
   - Throws `ConfigError` naming **all** missing required vars in one message — never `process.exit`. Only `index.ts` catches it (Phase 16).
@@ -430,15 +430,52 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
   - `LOG_LEVEL` is now validated against `trace|debug|info|warn|error|fatal` and throws `ConfigError` on anything else — this is the behavior change that makes the variable real.
   - `PORT` and `SEND_CONCURRENCY` parse as integers and throw `ConfigError` on non-numeric input.
 
-- [ ] **3.9** Test config loading
+- [x] **3.9** Test config loading
   - File: `test/config.test.ts`
   - Per design Test Plan: missing required vars throw `ConfigError` naming **all** of them; defaults applied; `LOG_LEVEL` validation rejects garbage and accepts each valid level; `PORT`/`SEND_CONCURRENCY` parse ints and reject non-numeric; `DB_PATH` default and override. Inject an env object — never mutate `process.env`.
 
-- [ ] **3.10** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **3.10** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-27.** All ten tasks done; the gate is green — `typecheck` clean, `build` emits `dist/config.js` + `dist/types.js`, `test:coverage` runs 28 tests with **100% statements / branches / functions / lines** on `src/config.ts`.
+
+**Files added.** `tsconfig.json`, `tsconfig.build.json`, `vitest.config.ts`, `package-lock.json`, `src/types.ts`, `src/config.ts`, `test/config.test.ts`. **Modified:** `package.json` (deps + scripts), `.gitignore`.
+
+**Deviation 1 — `typescript` is pinned to `^5`, not `latest`.** `npm install -D typescript` resolved **7.0.2** (the native port is now the `latest` tag), and TS 7 has **removed `moduleResolution: node10`**:
+
+```
+tsconfig.json(6,25): error TS5108: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration.
+```
+
+Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: node`. Rather than change the module-resolution strategy — which is exactly the surface that keeps `esModuleInterop` honest against the CJS-only `better-sqlite3`/`express@4`/`busboy` chain — `typescript` was pinned to `^5` (resolved **5.9.3**). Treat this as a companion pin to P12 (`@types/express@^4`): **do not let a future `npm update` pull TypeScript 7** without re-deciding `moduleResolution` for the whole project, including the Phase 17 Docker builder stage.
+
+**Task 3.2 — host Node is `v24.13.1`** (npm 11.8.0), not the container's `v20.20.2`. `better-sqlite3@11.10.0` loads and executes DDL on `:memory:` under it without a rebuild, so the host unit suite is unblocked. Note the ABI gap for later phases: **the unit suite runs on Node 24 while the image is `node:20-alpine`.** Nothing in Phase 3 depends on that, but any behavior that differs between the two (SQLite version compiled into the binding, `Intl`/`Date` formatting) would show up as a test that passes locally and fails in the image.
+
+**Resolved versions installed** (recorded so a later `npm ci` regression is diagnosable): `pino` 10.3.1, `pino-http` 11.0.0, `prom-client` 15.1.3, `typescript` 5.9.3, `@types/node` 26.1.2, `@types/express` 4.17.25, `@types/better-sqlite3` 7.6.13, `vitest` 4.1.10, `@vitest/coverage-v8` 4.1.10, `supertest` 7.2.2, `@types/supertest` 7.2.1, `tsx` 4.23.1, `aws-sdk-client-mock` 4.1.0 (the same major/minor the Phase 0–1 capture ran against, per the Phase 2 note).
+
+**Deviation 2 — `loadConfig` aggregates *all* problems, not just missing vars.** The plan only requires the missing-variable list to be collected into one message. The implementation extends that to `PORT`, `SEND_CONCURRENCY`, and `LOG_LEVEL`: every problem is pushed onto one list and thrown as a single `ConfigError` with the parts joined by `'; '`. A container that is misconfigured in three ways should say so once, not three restarts in a row. `test/config.test.ts` pins this ("reports every problem in one error").
+
+**Deviation 3 — `PORT`/`SEND_CONCURRENCY` require a *positive* integer.** The plan says "parse as integers and throw `ConfigError` on non-numeric input". The implementation validates `/^\d+$/` after trimming **and** rejects `0`. Rationale: the legacy `parseInt(x, 10) || 3003` silently mapped `0` to the default, and a `SEND_CONCURRENCY` of 0 would deadlock the Phase 12 semaphore permanently — the exact D1 failure class this project exists to detect. Rejected values are `abc`, `12abc`, `1.5`, `-1`, `0`, `NaN`; all are tested. An unset or all-whitespace value still falls back to the default rather than throwing.
+
+**Blank optional vars fall back to defaults.** `AWS_REGION=''`, `SES_CONFIGURATION_SET=''`, `PORT=''`, `LOG_LEVEL=''`, `DB_PATH=''` all yield the default, matching the legacy `||` semantics. An empty **required** var is still treated as missing (legacy `!pair[1]`).
+
+**`src/types.ts` — notes for the phases that must conform to it.**
+- It is types-only (`import type` throughout), so it emits no runtime code, which is what keeps its coverage exclusion honest. `tsc` still writes a stub `dist/types.js`; that is expected.
+- `Db.insertEvent` takes a **single `EventRow` object**, not 11 positional arguments. The other inserts stay positional, mirroring `lib/db.js`'s prepared statements. Phase 5 must implement this shape.
+- `Db.deleteSuppression` returns `number` (rows changed) so Phase 14's suppression route can decide whether to increment `suppressions_removed_total` — the legacy handler returns 200 regardless, and that response behavior is unchanged (pinned by `captured/http-suppression-plus-literal.json`).
+- `DbOperation` is the **bounded** union backing `db_errors_total{operation}` required by P3. Phase 5 must draw the label from this type, never from a free-form string.
+- `Metrics` names every metric from design §4.1–§4.5 as a camelCase property (26 entries + `register`). Phase 4.3 must register exactly these; Phase 4.4's literal-list assertion is the guard.
+- `SesClient.sendRawEmail` keeps the legacy `{ messageId }` return shape (lowercase), not the SDK's `MessageId`.
+- `SesEvent` models every optional SES block as genuinely optional (`delivery?`, `bounce?`, `complaint?`), which is what makes the D7 fix a type-checked requirement in Phase 7 rather than a remembered one.
+
+**`rootDir: "src"` verified (P4).** `npm run build` emits `dist/config.js`, not `dist/src/config.js`. Nothing under `src/` imports `package.json` yet — Phase 4.1's `getVersion()` is the first place that matters, and it must use the untyped `require`.
+
+**Notes for Phase 4.**
+- `pino` is on the **10.x** line. The design's §3 sketch (`pino.stdTimeFunctions.isoTime`, `formatters.level`, `redact`) is unchanged in v10, but the second argument to `pino(opts, destination)` is how `createLogger`'s optional `destination` must be passed.
+- `prom-client` 15.1.3: `collectDefaultMetrics({ register })` and `register.getMetricsAsJSON()` are both present as the plan assumes.
+- `vitest` is on the **4.x** line, not 3.x. `pool: 'forks'` is still valid. Coverage printed an empty per-file table but a correct summary; do not chase that.
+- The coverage gate currently sees only `src/config.ts` (`src/types.ts` is excluded). Every phase from here adds `src/` files that must arrive with their tests in the same phase, or the gate goes red at the phase boundary.
 
 ---
 
