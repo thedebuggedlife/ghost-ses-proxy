@@ -1,0 +1,14 @@
+{
+  "_request": {
+    "method": "POST",
+    "path": "/v3/example.com/messages",
+    "auth": true,
+    "scenario": "canonical",
+    "fieldsFrom": "send-scenarios.json"
+  },
+  "status": 200,
+  "body": {
+    "id": "<<BATCH_UUID>@example.com>",
+    "message": "Queued. Thank you."
+  }
+}

@@ -368,6 +368,272 @@ const TEMPLATE_VAR_INPUTS = {
   },
 };
 
+// --- HTTP scenarios --------------------------------------------------------
+// Ghost's mailgun.js is the anchoring consumer for every artifact below.
+//
+// Send request field maps are committed as send-scenarios.json so the contract
+// test replays the exact same requests; the MIME artifacts are the output of
+// the whole pipeline (busboy -> substituteVars -> placeholder stripping ->
+// h:* collection -> X-Ghost-Email-Id injection -> buildRawMime), because
+// buildRawMime is not exported by lib/send-email.js.
+
+const BASE_URL = 'http://localhost:3003';
+const AUTH_HEADER = 'Basic ' + Buffer.from('api:test-key').toString('base64');
+
+const EVENT_SCENARIOS = [
+  ['events-unfiltered', '/v3/example.com/events'],
+  ['events-filter-event', '/v3/example.com/events?event=' + encodeURIComponent('delivered OR failed')],
+  ['events-filter-tags', '/v3/example.com/events?tags=' + encodeURIComponent('bulk-email AND ghost-email')],
+  ['events-range', '/v3/example.com/events?begin=1750000002&end=1750000005'],
+  ['events-limit-3', '/v3/example.com/events?limit=3'],
+];
+
+const SUPPRESSION_SCENARIOS = [
+  // Fully percent-encoded local part: %2B for the plus, %40 for the at sign.
+  ['suppression-bounces-encoded', '/v3/example.com/bounces/bounced%2Btag%40example.com'],
+  // Literal '+' in the path — not a space, unlike a query string.
+  ['suppression-plus-literal', '/v3/example.com/bounces/bounced+tag%40example.com'],
+  ['suppression-complaints', '/v3/example.com/complaints/complainer%40example.com'],
+  ['suppression-unknown-type', '/v3/example.com/unsubscribed/complainer%40example.com'],
+];
+
+const RECIPIENT_VARIABLES = JSON.stringify({
+  'alice@example.com': { name: 'Alice', unsubscribe_url: 'https://example.com/unsubscribe/alice' },
+  'bob@example.com': { name: 'Bob', unsubscribe_url: 'https://example.com/unsubscribe/bob' },
+});
+
+const SEND_SCENARIOS = {
+  canonical: {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'Example Newsletter <newsletter@example.com>',
+      subject: 'Weekly digest',
+      to: ['alice@example.com', 'bob@example.com'],
+      html: '<html><body><p>Hello %recipient.name%!</p><p><a href="%recipient.unsubscribe_url%">Unsubscribe</a></p></body></html>',
+      text: 'Hello %recipient.name%!\r\nUnsubscribe: %recipient.unsubscribe_url%',
+      'recipient-variables': RECIPIENT_VARIABLES,
+      'o:tag': ['bulk-email', 'ghost-email'],
+      'v:email-id': '650000000000000000000001',
+      'h:List-Unsubscribe': '<%recipient.unsubscribe_url%>, <%tag_unsubscribe_email%>',
+      'h:List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  },
+  'no-text': {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'newsletter@example.com',
+      subject: 'HTML only',
+      to: ['alice@example.com'],
+      html: '<html><body><p>HTML only</p></body></html>',
+      'v:email-id': '650000000000000000000002',
+    },
+  },
+  'no-html': {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'newsletter@example.com',
+      subject: 'Text only',
+      to: ['alice@example.com'],
+      text: 'Text only',
+      'v:email-id': '650000000000000000000003',
+    },
+  },
+  'custom-headers': {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'newsletter@example.com',
+      subject: 'Custom headers',
+      to: ['alice@example.com'],
+      html: '<html><body><p>Custom headers</p></body></html>',
+      text: 'Custom headers',
+      'h:Reply-To': 'reply@example.com',
+      'h:Sender': 'sender@example.com',
+      'h:X-Foo': 'foo-value',
+      'h:X-Bar': 'bar-value',
+      'v:email-id': '650000000000000000000004',
+    },
+  },
+  utf8: {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'Résumé <newsletter@example.com>',
+      subject: 'Résumé — 日本語 ✉️',
+      to: ['alice@example.com'],
+      html: '<html><body><p>Grüße — 日本語 ✉️</p></body></html>',
+      text: 'Grüße — 日本語 ✉️',
+      'v:email-id': '650000000000000000000005',
+    },
+  },
+  'missing-from': {
+    sesBehaviour: 'ok',
+    fields: {
+      subject: 'No from field',
+      to: ['alice@example.com'],
+      text: 'No from field',
+    },
+  },
+  'malformed-recipient-variables': {
+    sesBehaviour: 'ok',
+    fields: {
+      from: 'newsletter@example.com',
+      subject: 'Bad vars',
+      to: ['alice@example.com'],
+      text: 'Bad vars',
+      'recipient-variables': '{not valid json',
+    },
+  },
+  'all-recipients-fail': {
+    sesBehaviour: 'fail',
+    fields: {
+      from: 'newsletter@example.com',
+      subject: 'Everything fails',
+      to: ['alice@example.com', 'bob@example.com'],
+      text: 'Everything fails',
+      'v:email-id': '650000000000000000000006',
+    },
+  },
+};
+
+async function waitForServer() {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      const res = await fetch(BASE_URL + '/health');
+      if (res.ok) {
+        await res.arrayBuffer();
+        return;
+      }
+    } catch (e) {
+      // listener not up yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('server never became ready on ' + BASE_URL);
+}
+
+async function request(method, path, init) {
+  const res = await fetch(BASE_URL + path, Object.assign({ method: method }, init || {}));
+  const text = await res.text();
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch (e) {
+    body = text;
+  }
+  return { status: res.status, body: body };
+}
+
+async function captureHealth() {
+  const res = await request('GET', '/health');
+  writeJson('http-health.json', {
+    _precondition: {
+      note: 'Captured immediately after seeding and before any send scenario, so the counts are exactly the seed. Assert this fixture only against a database in the same state.',
+      seeds: ['events-seed.json', 'suppressions-seed.json'],
+      expectedCounts: {
+        message_map: 0,
+        recipient_emails: 0,
+        events: EVENTS_SEED.length,
+        suppressions: SUPPRESSIONS_SEED.length,
+      },
+    },
+    _request: { method: 'GET', path: '/health', auth: false },
+    status: res.status,
+    body: res.body,
+  });
+}
+
+async function captureEvents() {
+  let limitedPage = null;
+
+  for (const entry of EVENT_SCENARIOS) {
+    const name = entry[0];
+    const path = entry[1];
+    const res = await request('GET', path, { headers: { Authorization: AUTH_HEADER } });
+    if (name === 'events-limit-3') limitedPage = res;
+    writeJson('http-' + name + '.json', {
+      _request: { method: 'GET', path: path, auth: true },
+      status: res.status,
+      body: res.body,
+    });
+  }
+
+  // paging.next is NOT normalized (design §8.4): it reproduces because the
+  // harness always talks to localhost:3003 and the seed ids are fixed.
+  const nextUrl = limitedPage && limitedPage.body && limitedPage.body.paging && limitedPage.body.paging.next;
+  if (!nextUrl) throw new Error('events-limit-3 produced no paging.next cursor');
+  const nextPath = nextUrl.slice(BASE_URL.length);
+  const secondPage = await request('GET', nextPath, { headers: { Authorization: AUTH_HEADER } });
+  writeJson('http-events-page-2.json', {
+    _request: { method: 'GET', path: nextPath, auth: true, derivedFrom: 'http-events-limit-3.json paging.next' },
+    status: secondPage.status,
+    body: secondPage.body,
+  });
+
+  const badTokenPath = '/v3/example.com/events/invalid-page-token';
+  const badToken = await request('GET', badTokenPath, { headers: { Authorization: AUTH_HEADER } });
+  writeJson('http-events-invalid-token.json', {
+    _request: { method: 'GET', path: badTokenPath, auth: true },
+    status: badToken.status,
+    body: badToken.body,
+  });
+}
+
+async function captureSuppressions() {
+  for (const entry of SUPPRESSION_SCENARIOS) {
+    const name = entry[0];
+    const path = entry[1];
+    const res = await request('DELETE', path, { headers: { Authorization: AUTH_HEADER } });
+    writeJson('http-' + name + '.json', {
+      _request: { method: 'DELETE', path: path, auth: true },
+      status: res.status,
+      body: res.body,
+    });
+  }
+}
+
+async function captureSends() {
+  writeRaw('send-scenarios.json', SEND_SCENARIOS);
+
+  for (const name of Object.keys(SEND_SCENARIOS)) {
+    const scenario = SEND_SCENARIOS[name];
+    sesBehaviour = scenario.sesBehaviour;
+
+    const form = new FormData();
+    for (const key of Object.keys(scenario.fields)) {
+      const value = scenario.fields[key];
+      if (Array.isArray(value)) {
+        for (const item of value) form.append(key, item);
+      } else {
+        form.append(key, value);
+      }
+    }
+
+    const before = capturedMime.length;
+    const res = await request('POST', '/v3/example.com/messages', {
+      body: form,
+      headers: { Authorization: AUTH_HEADER },
+    });
+
+    writeJson('http-send-' + name + '.json', {
+      _request: {
+        method: 'POST',
+        path: '/v3/example.com/messages',
+        auth: true,
+        scenario: name,
+        fieldsFrom: 'send-scenarios.json',
+      },
+      status: res.status,
+      body: res.body,
+    });
+
+    const produced = capturedMime.slice(before);
+    for (let i = 0; i < produced.length; i++) {
+      writeText('mime-' + name + '-' + i + '.txt', produced[i]);
+    }
+  }
+
+  sesBehaviour = 'ok';
+}
+
 // --- Capture ---------------------------------------------------------------
 
 const TABLES = ['message_map', 'recipient_emails', 'events', 'suppressions'];
@@ -400,7 +666,7 @@ function captureTemplateVars() {
   writeJson('template-vars.json', out);
 }
 
-function main() {
+async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   seed();
@@ -408,10 +674,21 @@ function main() {
   captureEventMaps();
   captureTemplateVars();
 
+  // Capture order is load-bearing: /health records the seed counts, so it must
+  // run before any send scenario inserts message_map / recipient_emails rows.
+  await waitForServer();
+  await captureHealth();
+  await captureEvents();
+  await captureSuppressions();
+  await captureSends();
+
   console.log('capture complete');
   // The express listener, the poller promise, and lib/db.js's cleanup interval
   // all keep the loop alive.
   process.exit(0);
 }
 
-main();
+main().catch((err) => {
+  console.error('capture failed:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});

@@ -1,0 +1,23 @@
+From: Example Newsletter <newsletter@example.com>
+To: alice@example.com
+Subject: Weekly digest
+Message-ID: <<BATCH_UUID>@example.com>
+List-Unsubscribe: <https://example.com/unsubscribe/alice>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+X-Ghost-Email-Id: 650000000000000000000001
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_<BOUNDARY>"
+
+------=_Part_<BOUNDARY>
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+SGVsbG8gQWxpY2UhDQpVbnN1YnNjcmliZTogaHR0cHM6Ly9leGFtcGxlLmNvbS91bnN1YnNjcmliZS9hbGljZQ==
+
+------=_Part_<BOUNDARY>
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+SGVsbG8gQWxpY2UhPC9wPjxwPjxhIGhyZWY9Imh0dHBzOi8vZXhhbXBsZS5jb20vdW5zdWJzY3JpYmUvYWxpY2UiPlVuc3Vic2NyaWJlPC9hPjwvcD48L2JvZHk+PC9odG1sPg==
+
+------=_Part_<BOUNDARY>--

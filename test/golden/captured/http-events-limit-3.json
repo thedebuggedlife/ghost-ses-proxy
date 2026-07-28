@@ -1,0 +1,73 @@
+{
+  "_request": {
+    "method": "GET",
+    "path": "/v3/example.com/events?limit=3",
+    "auth": true
+  },
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "evt-0001",
+        "event": "delivered",
+        "timestamp": 1750000001,
+        "recipient": "alice@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000001"
+        },
+        "delivery-status": {
+          "code": 250,
+          "message": "OK",
+          "description": "",
+          "enhanced-code": ""
+        }
+      },
+      {
+        "id": "evt-0002",
+        "event": "opened",
+        "timestamp": 1750000002,
+        "recipient": "bob@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000001"
+        }
+      },
+      {
+        "id": "evt-0003",
+        "event": "failed",
+        "timestamp": 1750000003,
+        "recipient": "carol@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000002"
+        },
+        "severity": "permanent",
+        "delivery-status": {
+          "code": 607,
+          "message": "Not delivering to previously bounced address",
+          "description": "",
+          "enhanced-code": "5.1.1 user unknown"
+        }
+      }
+    ],
+    "paging": {
+      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=",
+      "previous": "",
+      "first": "",
+      "last": ""
+    }
+  }
+}

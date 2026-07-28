@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 0 complete
-> **Current phase:** Phase 1
+> **Status:** In progress — Phase 1 complete
+> **Current phase:** Phase 2
 
 ---
 
@@ -206,42 +206,80 @@ Split from Phase 0 deliberately (critique finding 10): each debugging cycle here
 
 ### Tasks
 
-- [ ] **1.1** Add the HTTP driver
+- [x] **1.1** Add the HTTP driver
   - File: `scripts/capture-golden.cjs`
   - Drive the app with Node 20's global `fetch` + `FormData` against `http://localhost:3003`. `form.append('to', …)` twice yields the repeated field busboy accumulates into an array.
   - Auth header on every `/v3` request: `Basic ` + `Buffer.from('api:test-key').toString('base64')`.
   - **Capture order is load-bearing** — `/health` counts change as later scenarios insert rows. Run the scenarios in exactly the order of tasks 1.2 → 1.4.
 
-- [ ] **1.2** Capture `/health` immediately after seeding
+- [x] **1.2** Capture `/health` immediately after seeding
   - Artifact: `captured/http-health.json`
   - Runs **before any send scenario**, so the recorded counts are exactly the Phase 0 seed: `message_map: 0`, `recipient_emails: 0`, `events: <event seed count>`, `suppressions: 2`.
   - Record that precondition in the artifact itself (a `_precondition` key naming the two seed files) so Phase 15's contract test cannot assert it against the wrong database state (critique finding 7).
 
-- [ ] **1.3** Capture the events and suppression scenarios
+- [x] **1.3** Capture the events and suppression scenarios
   - Artifacts: `captured/http-events-*.json`, `captured/http-suppression-*.json`
   - Events: unfiltered; `?event=delivered OR failed`; `?tags=<one> AND <two>`; a `?begin=&end=` range; `?limit=3` (first page — this is what pins `paging.next`); the second page fetched via the returned cursor path `/v3/example.com/events/<cursor>`; an invalid page token → 400.
   - Suppression: a valid `bounces` delete of a `%40`-encoded address; a delete of the `+`-containing seeded address; an unknown type → 404.
   - `paging.next` is **not** normalized (design §8.4) — it reproduces because the harness always sends `Host: localhost:3003` and the seed ids are fixed. Phase 15's contract test pins the same Host (Design Decision P8).
 
-- [ ] **1.4** Capture the send scenarios and raw MIME
+- [x] **1.4** Capture the send scenarios and raw MIME
   - Artifacts: `captured/http-send-*.json`, `captured/mime-*.txt`, `captured/send-scenarios.json`
   - Scenarios, each flipping `sesBehaviour` as needed: canonical (html + text, 2 recipients, `recipient-variables`, `o:tag`, `v:email-id`, `h:List-Unsubscribe` containing the `<%tag_unsubscribe_email%>` placeholder); no-text; no-html; custom `h:X-Foo` headers; UTF-8 subject and body; missing `from` → 400; malformed `recipient-variables` → 400; all-recipients-fail → 500 with `errors[]`.
   - **Write the request field maps to `captured/send-scenarios.json`** — the exact form fields for each scenario, keyed by scenario name (Design Decision P9). Phase 15 replays these same requests; without them the MIME assertion cannot be reproduced (critique finding 3).
   - MIME is captured from the SES mock's `input.RawMessage.Data`, not by calling `buildRawMime` — that function is **not exported** by `lib/send-email.js`. Each `mime-*.txt` is therefore the output of the *whole* pipeline (busboy parse → `substituteVars` → placeholder stripping → `h:*` collection → `X-Ghost-Email-Id` injection → `buildRawMime`), and Phase 15 must assert it the same way.
   - Apply `normalize` before writing.
 
-- [ ] **1.5** Re-run the full capture and confirm all artifacts land
+- [x] **1.5** Re-run the full capture and confirm all artifacts land
   - Rebuild the image and re-run with the bind mount from task 0.7.
   - Spot-check one `mime-*.txt` against `lib/send-email.js`'s `buildRawMime` header order by eye — this is the file the whole contract suite hangs on.
 
-- [ ] **1.6** Gate
+- [x] **1.6** Gate
   - Every `.json` under `test/golden/captured/` parses; every `mime-*.txt` is non-empty and contains `----=_Part_<BOUNDARY>`.
   - Every artifact listed in design §8.3 now exists.
   - Re-run the legacy syntax check from task 0.8.
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-27.** All six tasks done; the gate is green. Only `scripts/capture-golden.cjs` changed; `Dockerfile.capture` and `normalize.cjs` were untouched.
+
+**Artifact inventory after this phase** — 37 JSON + 8 MIME under `test/golden/captured/`:
+- `http-health.json`, `http-events-{unfiltered,filter-event,filter-tags,range,limit-3,page-2,invalid-token}.json`, `http-suppression-{bounces-encoded,plus-literal,complaints,unknown-type}.json`, `http-send-{canonical,no-text,no-html,custom-headers,utf8,missing-from,malformed-recipient-variables,all-recipients-fail}.json`, `send-scenarios.json`
+- `mime-canonical-{0,1}.txt`, `mime-no-text-0.txt`, `mime-no-html-0.txt`, `mime-custom-headers-0.txt`, `mime-utf8-0.txt`, `mime-all-recipients-fail-{0,1}.txt`
+
+**Artifact shape.** Every `http-*.json` is `{ _request: {method, path, auth, …}, status, body }`. `http-health.json` additionally carries `_precondition` (task 1.2) naming both seed files and the expected counts. `http-send-*.json`'s `_request` carries `scenario` + `fieldsFrom: "send-scenarios.json"` rather than restating the form fields (P9). `http-events-page-2.json`'s `_request.derivedFrom` records that its path came from the limit-3 response's `paging.next`. Phase 15's contract test can drive every request straight off `_request` — no scenario table needs restating on the host.
+
+**MIME file naming.** `mime-<scenario>-<i>.txt`, indexed even when a scenario produces one message. The index is the position in `toList`: `mime-canonical-0.txt` is alice, `-1` is bob, and the two genuinely differ (per-recipient `recipient-variables` substitution reaches both the base64 bodies and the `List-Unsubscribe` header). Ordering is deterministic: `semaphore.acquire()` resolves synchronously while `current < max` (10 here), so the per-recipient `.then` callbacks run as microtasks in `toList.map` order, and `aws-sdk-client-mock` invokes `callsFake` synchronously inside `send()`.
+
+**Spot-check of `mime-canonical-0.txt` against `buildRawMime` (task 1.5).** Header order matches `lib/send-email.js:46-76` exactly: `From, To, Subject, [Reply-To], [Sender], [Message-ID], [List-Unsubscribe], [List-Unsubscribe-Post], <customHeaders…>, MIME-Version, Content-Type`. `mime-custom-headers-0.txt` confirms the excluded-key rule — `h:Reply-To`/`h:Sender` render as real `Reply-To:`/`Sender:` headers while `h:X-Foo`/`h:X-Bar` pass through as `X-Foo:`/`X-Bar:`, and `X-Ghost-Email-Id` is appended last. The `<%tag_unsubscribe_email%>` placeholder strips cleanly: `<%recipient.unsubscribe_url%>, <%tag_unsubscribe_email%>` → `List-Unsubscribe: <https://example.com/unsubscribe/alice>`. Text part precedes HTML part; both base64 with a blank line after the headers; closing delimiter `------=_Part_<BOUNDARY>--`.
+
+**Deviation 1 — suppression scenarios are four, not three.** The plan asked for "a valid `bounces` delete of a `%40`-encoded address; a delete of the `+`-containing seeded address; an unknown type → 404". The only seeded `bounces` row is `bounced+tag@example.com`, so the first two collapse onto the same address. Captured instead:
+- `suppression-bounces-encoded` — `/bounces/bounced%2Btag%40example.com` (fully encoded; this is the delete that actually removes the seeded row)
+- `suppression-plus-literal` — `/bounces/bounced+tag%40example.com` (literal `+` in the path; proves Express does *not* decode it to a space outside a query string — both artifacts decode to `bounced+tag@example.com`)
+- `suppression-complaints` — `/complaints/complainer%40example.com`, the second seeded row, so both valid types are covered
+- `suppression-unknown-type` — `/unsubscribed/…` → 404
+
+Note the handler echoes the address and returns 200 regardless of whether a row was deleted, so `suppression-plus-literal` (running second, after the row is gone) is still a valid 200 assertion — it pins decoding, not deletion.
+
+**Deviation 2 — invalid page token uses `invalid-page-token`, and it 400s for a non-obvious reason.** `Buffer.from(s, 'base64')` never throws; it silently drops invalid characters. The 400 comes from `JSON.parse` failing on the resulting garbage bytes, not from the base64 decode. A future "improvement" that pre-validates base64 would still need to 400 here.
+
+**Deviation 3 — the second page has no `limit`.** `paging.next` is built without carrying the query string forward (`lib/events-api.js:129`), so following the cursor from `?limit=3` lands on `limit=300` and returns the remaining four rows with an empty `paging.next`. That is the real Ghost-facing behavior and is captured as such; do not "fix" the cursor to preserve `limit` without re-capturing.
+
+**Known normalizer collapse — seed `message_id` values.** The three distinct seeded `message_id`s (`11111111-…`, `22222222-…`, `33333333-…`) all match the UUID normalizer, so every events-API item records `"message-id": "<BATCH_UUID>@example.com"`. This is symmetric (Phase 15 normalizes the computed value the same way) and no assertion depends on telling the three apart, but it means the captured events fixtures assert the *presence and shape* of `message-id`, not its value. Same class as the `SES_MESSAGE_ID` note in Phase 0. Do not change the seed ids without re-capturing.
+
+**Harness changes.**
+- `main()` is now `async` with a `.catch` that logs the stack and `process.exit(1)` — a rejected capture used to look like a successful one.
+- `waitForServer()` polls `GET /health` every 50 ms up to 200 times before the first real request. Phase 0's observation that `server.js`'s startup `console.log`s never appear no longer holds: `process.exit(0)` now happens well after `listen()`, so the banner and `SQS poller started` both show in the run log.
+- `request(method, path, init)` returns `{status, body}` with `body` falling back to the raw text when the response is not JSON.
+- Node 20's global `FormData` + `fetch` drive the sends; `form.append('to', …)` twice produces the repeated field `busboy` accumulates into an array, and fetch supplies the multipart boundary. Field append order is preserved end to end, which is what makes the `h:*` → `customHeaders` header order deterministic.
+- `sesBehaviour` is set per scenario and reset to `'ok'` after the loop.
+
+**Gate results (task 1.6).** All 37 `.json` parse; all 8 `mime-*.txt` are non-empty and contain `----=_Part_<BOUNDARY>`; no unexpected files in `captured/`; every design §8.3 artifact family present (`mime-*.txt` 8, `event-map-*.json` 11, `template-vars.json` 1, `http-*.json` 20, `schema.json` 1). `node --check` over `server.js` + all ten `lib/*.js` inside the image: clean. Harness exits 0, no container left running.
+
+**Notes for Phase 2.**
+- Rebuild `ghost-ses-proxy:capture` before the 2.1 determinism run — the image already carries the new harness from this phase, but `scripts/` is baked in with `COPY`, so any further edit needs a rebuild.
+- The AWS SDK now prints a `NodeVersionSupportWarning` on stderr under node 20. It does not reach any artifact; ignore it.
+- Determinism risk to watch in 2.1: batch UUIDs, MIME boundaries, and `created_at` are all normalized, and every id/timestamp that feeds a response is seeded. Nothing observed in this phase varies run to run.
 
 ---
 

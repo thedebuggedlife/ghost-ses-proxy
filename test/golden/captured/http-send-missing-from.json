@@ -1,0 +1,13 @@
+{
+  "_request": {
+    "method": "POST",
+    "path": "/v3/example.com/messages",
+    "auth": true,
+    "scenario": "missing-from",
+    "fieldsFrom": "send-scenarios.json"
+  },
+  "status": 400,
+  "body": {
+    "message": "Missing required fields: from, subject, to"
+  }
+}
