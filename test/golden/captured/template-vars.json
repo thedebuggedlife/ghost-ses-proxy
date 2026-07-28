@@ -1,0 +1,98 @@
+{
+  "basic": {
+    "input": {
+      "str": "Hello %recipient.name%!",
+      "vars": {
+        "name": "Alice"
+      }
+    },
+    "output": "Hello Alice!"
+  },
+  "unknown-var-left-verbatim": {
+    "input": {
+      "str": "Hi %recipient.missing%",
+      "vars": {
+        "name": "Alice"
+      }
+    },
+    "output": "Hi %recipient.missing%"
+  },
+  "empty-string": {
+    "input": {
+      "str": "",
+      "vars": {
+        "name": "Alice"
+      }
+    },
+    "output": ""
+  },
+  "null-vars": {
+    "input": {
+      "str": "Hello %recipient.name%",
+      "vars": null
+    },
+    "output": "Hello %recipient.name%"
+  },
+  "empty-vars": {
+    "input": {
+      "str": "Hello %recipient.name%",
+      "vars": {}
+    },
+    "output": "Hello %recipient.name%"
+  },
+  "repeated-occurrences": {
+    "input": {
+      "str": "%recipient.name% and %recipient.name%",
+      "vars": {
+        "name": "Bob"
+      }
+    },
+    "output": "Bob and Bob"
+  },
+  "multiple-vars": {
+    "input": {
+      "str": "To %recipient.first% %recipient.last%",
+      "vars": {
+        "first": "Ada",
+        "last": "Lovelace"
+      }
+    },
+    "output": "To Ada Lovelace"
+  },
+  "no-placeholders": {
+    "input": {
+      "str": "plain text",
+      "vars": {
+        "name": "Alice"
+      }
+    },
+    "output": "plain text"
+  },
+  "regex-special-value": {
+    "input": {
+      "str": "Hi %recipient.name%",
+      "vars": {
+        "name": "$& $1 $` $' $$"
+      }
+    },
+    "output": "Hi $& $1 $` $' $$"
+  },
+  "empty-value": {
+    "input": {
+      "str": "Hi %recipient.name%!",
+      "vars": {
+        "name": ""
+      }
+    },
+    "output": "Hi !"
+  },
+  "unsubscribe-url": {
+    "input": {
+      "str": "<https://example.com/unsubscribe?uuid=%recipient.uuid%>",
+      "vars": {
+        "uuid": "abc-123"
+      }
+    },
+    "output": "<https://example.com/unsubscribe?uuid=abc-123>"
+  }
+}

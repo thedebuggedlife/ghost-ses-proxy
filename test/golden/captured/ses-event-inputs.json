@@ -1,0 +1,457 @@
+{
+  "delivery": {
+    "eventType": "Delivery",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000001-000000",
+      "destination": [
+        "alice@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "alice@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "delivery": {
+      "timestamp": "2026-07-20T12:00:05.000Z",
+      "recipients": [
+        "alice@example.com"
+      ],
+      "processingTimeMillis": 1234,
+      "smtpResponse": "250 2.0.0 OK",
+      "reportingMTA": "a8-52.smtp-out.amazonses.com"
+    }
+  },
+  "delivery-multi-recipient": {
+    "eventType": "Delivery",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000002-000000",
+      "destination": [
+        "alice@example.com",
+        "bob@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "alice@example.com, bob@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "delivery": {
+      "timestamp": "2026-07-20T12:00:06.000Z",
+      "recipients": [
+        "alice@example.com",
+        "bob@example.com"
+      ],
+      "processingTimeMillis": 2345,
+      "smtpResponse": "250 2.0.0 OK",
+      "reportingMTA": "a8-52.smtp-out.amazonses.com"
+    }
+  },
+  "bounce-permanent": {
+    "eventType": "Bounce",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000003-000000",
+      "destination": [
+        "carol@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "carol@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "bounce": {
+      "timestamp": "2026-07-20T12:00:07.000Z",
+      "bounceType": "Permanent",
+      "bounceSubType": "General",
+      "feedbackId": "010001912a3b4c5d-feedback-000001-000000",
+      "reportingMTA": "dsn; a8-52.smtp-out.amazonses.com",
+      "bouncedRecipients": [
+        {
+          "emailAddress": "carol@example.com",
+          "action": "failed",
+          "status": "5.1.1",
+          "diagnosticCode": "smtp; 550 5.1.1 user unknown"
+        }
+      ]
+    }
+  },
+  "bounce-transient": {
+    "eventType": "Bounce",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000004-000000",
+      "destination": [
+        "dave@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "dave@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "bounce": {
+      "timestamp": "2026-07-20T12:00:08.000Z",
+      "bounceType": "Transient",
+      "bounceSubType": "MailboxFull",
+      "feedbackId": "010001912a3b4c5d-feedback-000002-000000",
+      "reportingMTA": "dsn; a8-52.smtp-out.amazonses.com",
+      "bouncedRecipients": [
+        {
+          "emailAddress": "dave@example.com",
+          "action": "delayed",
+          "status": "4.4.7",
+          "diagnosticCode": "smtp; 452 4.2.2 mailbox full"
+        }
+      ]
+    }
+  },
+  "complaint": {
+    "eventType": "Complaint",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000005-000000",
+      "destination": [
+        "grace@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "grace@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "complaint": {
+      "timestamp": "2026-07-20T12:00:09.000Z",
+      "arrivalDate": "2026-07-20T12:00:10.000Z",
+      "feedbackId": "010001912a3b4c5d-feedback-000003-000000",
+      "complaintFeedbackType": "abuse",
+      "userAgent": "AnyCompany Feedback Loop (V0.01)",
+      "complainedRecipients": [
+        {
+          "emailAddress": "grace@example.com"
+        }
+      ]
+    }
+  },
+  "open": {
+    "eventType": "Open",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000006-000000",
+      "destination": [
+        "bob@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "bob@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "open": {
+      "timestamp": "2026-07-20T12:00:11.000Z",
+      "ipAddress": "203.0.113.10",
+      "userAgent": "Mozilla/5.0"
+    }
+  },
+  "click": {
+    "eventType": "Click",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000007-000000",
+      "destination": [
+        "frank@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "frank@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "click": {
+      "timestamp": "2026-07-20T12:00:12.000Z",
+      "ipAddress": "203.0.113.11",
+      "userAgent": "Mozilla/5.0",
+      "link": "https://example.com/post",
+      "linkTags": null
+    }
+  },
+  "reject": {
+    "eventType": "Reject",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000008-000000",
+      "destination": [
+        "heidi@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "heidi@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "reject": {
+      "reason": "Bad content"
+    }
+  },
+  "send": {
+    "eventType": "Send",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000009-000000",
+      "destination": [
+        "alice@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "alice@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "send": {}
+  },
+  "delivery-delay": {
+    "eventType": "DeliveryDelay",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-000000000000000a-000000",
+      "destination": [
+        "ivan@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "ivan@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "deliveryDelay": {
+      "timestamp": "2026-07-20T12:00:13.000Z",
+      "delayType": "TransientCommunicationFailure",
+      "expirationTime": "2026-07-21T12:00:13.000Z",
+      "delayedRecipients": [
+        {
+          "emailAddress": "ivan@example.com",
+          "status": "4.4.1"
+        }
+      ]
+    }
+  },
+  "unknown-type": {
+    "eventType": "Subscription",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-000000000000000b-000000",
+      "destination": [
+        "judy@example.com"
+      ],
+      "headers": [
+        {
+          "name": "From",
+          "value": "newsletter@example.com"
+        },
+        {
+          "name": "To",
+          "value": "judy@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Weekly digest"
+        },
+        {
+          "name": "Message-ID",
+          "value": "<44444444-4444-4444-8444-444444444444@example.com>"
+        },
+        {
+          "name": "X-Ghost-Email-Id",
+          "value": "650000000000000000000009"
+        }
+      ]
+    },
+    "subscription": {
+      "contactList": "example"
+    }
+  }
+}
