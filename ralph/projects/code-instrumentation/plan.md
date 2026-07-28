@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 1 complete
-> **Current phase:** Phase 2
+> **Status:** In progress — Phase 2 complete
+> **Current phase:** Phase 3
 
 ---
 
@@ -289,24 +289,24 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
 
 ### Tasks
 
-- [ ] **2.1** Prove determinism (design §8.1 gate 3)
+- [x] **2.1** Prove determinism (design §8.1 gate 3)
   - Run the capture a second time into a scratch directory: `docker run --rm -v "$PWD/.capture-verify:/app/test/golden/captured" ghost-ses-proxy:capture`
   - `diff -r test/golden/captured .capture-verify` must be empty.
   - Any variance means a missing normalizer — add it to `scripts/normalize.cjs` and re-capture **both** directories. Do not paper over variance by deleting the fixture.
   - Delete `.capture-verify` when green.
 
-- [ ] **2.2** Write provenance
+- [x] **2.2** Write provenance
   - File: `test/golden/captured/MANIFEST.json`
   - `{ "capturedFromSha": "<sha from task 0.1>", "capturedAt": "<ISO date>", "harness": "scripts/capture-golden.cjs", "dependencyVersions": { … }, "reproducibilityCaveat": "…", "files": { "<name>": { "anchoredBy": "<consumer>" } } }`
   - `anchoredBy` is design §8.1 gate 2 — every file names the external consumer that requires its shape (`Ghost mailgun.js`, `Mailgun API contract`, `SES raw message format`, `internal event-mapper contract`, `existing /data volume`). A file with no nameable consumer does not belong in `captured/`; move it to `REJECTED.md`.
   - `dependencyVersions` records the resolved versions the harness actually ran against (read them from the installed `node_modules/*/package.json` inside the container). `scripts/Dockerfile.capture` installs from semver ranges with no lockfile — the lockfile only arrives in Phase 3 — so recording the resolved set is what keeps design §8.5's "`git checkout <sha>` regenerates the fixtures" claim honest (critique finding 19). State that caveat in `reproducibilityCaveat`.
 
-- [ ] **2.3** Record rejected capture candidates
+- [x] **2.3** Record rejected capture candidates
   - File: `test/golden/REJECTED.md`
   - One row per candidate with the reason, covering at minimum the design §8.2 exclusion table: post-throw semaphore state (D1), `cleanup()`'s effect on `suppressions` (D2), poller-generated `events.id` values and redelivery behavior (D3), repeated-query-parameter and unclamped-`limit` responses (D4), and `mapSesEvent`'s output for a payload missing its event block plus the poller's handling of one (D7).
   - Add anything else that failed determinism in task 2.1, with the reason.
 
-- [ ] **2.4** Hand-author the intent fixtures
+- [x] **2.4** Hand-author the intent fixtures
   - Files under `test/golden/intent/`. These pin behavior the current implementation gets **wrong**, so Phase 15's contract test fails if the rewrite accidentally preserves the bug.
   - **Format:** each file is valid JSON carrying a top-level `"_meta": { "defect": "D2", "designSection": "§5.2", "note": "…" }` key — JSON has no comment syntax, so a prepended header would break `JSON.parse` and the task 2.5 gate (critique finding 13). The contract test ignores `_meta`.
   - `intent/d1-semaphore-release.json` — a throw inside the per-recipient path releases its slot and the batch completes as `partial`: 200 `{id, message:'Queued. Thank you.'}`, `send_in_flight` back to 0, and a subsequent send still succeeds. **This is a deliberate wire-contract change** — the same request returns 500 `Internal server error` today. See design §5.1 and Phase 13.1.
@@ -316,14 +316,45 @@ Note the handler echoes the address and returns 200 regardless of whether a row 
   - `intent/d4-limit-clamp.json` — `?limit=99999999` clamps to 1000; `?limit=0` and `?limit=-5` clamp to 1. (design §5.4)
   - `intent/d7-malformed-payload.json` — a `Delivery` payload with no `delivery` block (and a `Bounce` with no `bounce`, a `Complaint` with no `complaint`) maps to `[]` instead of throwing; the poller **deletes** the message, increments `sqs_parse_errors_total{reason="malformed_payload"}`, and does **not** increment `events_skipped_total`. Today this throws a `TypeError` and the message is never deleted, stalling the poller indefinitely. (design §5.5)
 
-- [ ] **2.5** Gate
+- [x] **2.5** Gate
   - Every file under `test/golden/intent/` parses via `JSON.parse` and has a `_meta.defect` and `_meta.designSection`.
   - `test/golden/REJECTED.md` covers all four §8.2 rows; `MANIFEST.json` has an `anchoredBy` entry for every file in `captured/`.
   - Re-run the legacy syntax check from task 0.8 — the implementation is still `server.js`.
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-27.** All five tasks done; the gate is green. No file under `src/` exists — the Phase 0–2 safety net is now complete and Phase 3 may begin.
+
+**Determinism (task 2.1) — clean on the first attempt.** Rebuilt `ghost-ses-proxy:capture`, ran into `.capture-verify`, and `diff -r test/golden/captured .capture-verify` was empty. No normalizer had to be added, nothing was rejected for variance. `.capture-verify` deleted.
+
+**Files added.**
+- `test/golden/captured/MANIFEST.json` — provenance, 45 `files` entries.
+- `test/golden/REJECTED.md`
+- `test/golden/intent/{d1-semaphore-release,d2-suppression-retention,d3-redelivery-dedupe,d4-repeated-query-param,d4-limit-clamp,d7-malformed-payload}.json`
+
+**MANIFEST notes (task 2.2).**
+- `dependencyVersions` was read from `/app/node_modules/*/package.json` **inside** the image: node `v20.20.2`, `express` 4.22.2, `busboy` 1.6.0, `uuid` 11.1.1, `better-sqlite3` 11.10.0, `@aws-sdk/client-ses` 3.1096.0, `@aws-sdk/client-sqs` 3.1096.0, `aws-sdk-client-mock` 4.1.0.
+- Each entry carries `anchoredBy` **and** a `role` of `input` or `output`, with the two roles explained in a top-level `roles` key. This makes Phase 0's "inputs raw, derived outputs normalized" rule machine-readable rather than folklore — Phase 15 must not run the normalizer over an `input` file before replaying it.
+- **`MANIFEST.json` is hand-written and is not produced by the harness.** A future `diff -r` determinism run will therefore report it as the one file present only on the left. That is expected and is stated in `reproducibilityCaveat`; do not "fix" it by teaching the harness to emit it (the harness would then have to know its own git SHA, which it cannot).
+
+**REJECTED.md notes (task 2.3).** Covers all five §8.2 rows (D1, D2, D3, D4 ×2 — repeated param and unclamped `limit` are separate rows — and D7), plus three further sections: gate-2 failures with no nameable consumer (startup `console.log` prose, unexported `buildRawMime` internals, `better-sqlite3` handles), the gate-3 values that are normalized rather than dropped, and surfaces the harness structurally cannot reach (poll-loop timing/backoff/`stop()`, the real SES error taxonomy). It also records why `paging.next` and `events.id` deliberately have **no** normalizer, so a future reader does not add the `<EVENT_ID>` normalizer design §8.4 lists and thereby destroy the `paging.next` assertion.
+
+**Intent fixture notes (task 2.4).**
+- Format is as the plan specifies: top-level `_meta` with `defect`, `designSection`, `kind`, `note`, `currentBehavior`, and `assertedBy`. `currentBehavior` is not in the plan's required key list; it was added because every one of these files exists to assert a *divergence*, and the divergence is unreadable without the thing being diverged from. The contract test ignores `_meta` entirely.
+- **Every expectation involving the seeded events was verified against a real `better-sqlite3` run** of the exact SQL `lib/events-api.js` builds, seeded from `captured/events-seed.json`, rather than reasoned about by eye. Confirmed: `event=delivered` → `evt-0001, evt-0005`; `event=delivered OR opened` → `evt-0001, evt-0002, evt-0005`; `tags=bulk-email` → `evt-0001, evt-0002, evt-0003, evt-0005, evt-0007` (note `evt-0003` is in this set — its tags array contains `bulk-email` despite being a `failed` event); unfiltered → all seven.
+- `d3`'s `expected.eventId` is `48331fd09573841d97dc2c60a1081f22`, computed with the design §5.3 algorithm from the joined string `010001912a3b4c5d-0000000000000003-000000 delivered dana@example.com 1784548805`. The fixture records the parts, the joined input, and the derivation, so Phase 11 can be checked against it without re-deriving. Its `delivery.timestamp` is explicit, per critique finding 14.
+- `d4-limit-clamp` pins a fifth case the plan did not list — `?limit=abc` still falls back to **300**. The clamp is easy to implement in a way that also collapses the default to 1 or 1000; this case blocks that.
+- `d4-repeated-query-param` pins two cases beyond the plan's two: the first value keeps its normal `' OR '` splitting (`firstString` collapses the repeat, it does not change filter semantics), and `?event=&event=opened` applies **no** filter because `String(v[0] ?? '')` is `''`, which is falsy.
+- `d1-semaphore-release` states explicitly that a *rejected SES promise* does not exercise D1 — the current code already handles that path correctly. The test must force a synchronous throw inside `runExclusive`'s callback (stub `buildRawMime` or `substituteVars`). It also asks for the follow-up send to be repeated `sendConcurrency` times, so a single leaked slot cannot hide behind spare capacity. The all-recipients-throw variant is included because §5.1's contract change has two halves, not one.
+- `d2-suppression-retention` asserts a **negative metric series**: `db_cleanup_deleted_rows_total{table="suppressions"}` must never exist. That is a stronger assertion than "the row survives" and catches a cleanup that deletes zero suppression rows only by accident.
+- `d7-malformed-payload` carries a `contrastWithTheSkipPath` section pinning that `Send`/`DeliveryDelay`/unknown types keep incrementing `events_skipped_total` and must **not** touch `sqs_parse_errors_total`. Design §5.5's whole point is that the two never share a denominator, so asserting the malformed path alone would be half a test. The unknown-type case records P10's `other` collapse.
+
+**Gate results (task 2.5).** 6 intent files parse and all carry `_meta.defect` + `_meta.designSection`; 45 captured files ↔ 45 MANIFEST entries with no gaps and no orphans; every captured `.json` parses; REJECTED.md covers D1/D2/D3/D4/D7; `node --check` over `server.js` + all ten `lib/*.js` inside the image is clean; no container left running.
+
+**Notes for Phase 3.**
+- The host runs Docker 29.6.1; task 3.2 must still record the **host** Node version, which is not the container's `v20.20.2`.
+- Nothing in Phases 0–2 wrote to `package.json`, so Phase 3.1 starts from the untouched dependency list. `aws-sdk-client-mock@4.1.0` is the version the capture ran against; installing it as a real devDependency at that version keeps the Phase 15 replay closest to the capture.
+- `.gitignore` currently contains only `node_modules/`, `data/`, `.env` — task 3.6 adds `dist/`, `coverage/`, `*.tsbuildinfo`. `.capture-verify` is not ignored; it was deleted rather than ignored, and any future determinism run should do the same.
 
 ---
 
