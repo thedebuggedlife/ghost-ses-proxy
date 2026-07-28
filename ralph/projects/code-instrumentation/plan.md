@@ -485,7 +485,7 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
 
 ### Tasks
 
-- [ ] **4.1** Implement the logger factory
+- [x] **4.1** Implement the logger factory
   - File: `src/logger.ts`
   - `createLogger(config: Config, destination?: pino.DestinationStream): Logger` exactly as design §3 sketches it: level from `config.logLevel`, `base: { service: 'ghost-ses-proxy', version: getVersion() }`, `timestamp: pino.stdTimeFunctions.isoTime`, `formatters.level: (label) => ({ level: label })`, `redact: ['req.headers.authorization', 'req.headers.cookie']`.
   - The optional `destination` lets tests capture output; production passes nothing (stdout).
@@ -499,7 +499,7 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
     From `dist/logger.js` this resolves `/app/package.json`, which the Dockerfile copies.
   - Everything goes to stdout, including errors — a deliberate change from today's stdout/stderr split (design §3).
 
-- [ ] **4.2** Test the logger
+- [x] **4.2** Test the logger
   - File: `test/logger.test.ts`
   - Write to an in-memory stream and assert parsed JSON: `level` is a **string** not pino's numeric default; `time` is ISO-8601; `service` and `version` on every line; `LOG_LEVEL=warn` suppresses `info` and below; an `authorization` header under `req.headers` is redacted; `logger.child({ component: 'send' })` bindings appear on child lines.
 
@@ -521,7 +521,10 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+- **PARTIAL RECOVERY (iterations 5–6, coordinator):** Two consecutive execution agents died on transient API faults (iteration 5: "Response stalled mid-stream", before any edit; iteration 6: "Connection closed mid-response", after writing source but before finishing tests). Neither ticked a checkbox.
+- Iteration 6 left `src/logger.ts`, `src/metrics.ts`, and `test/logger.test.ts` on disk, uncommitted. The coordinator verified this partial work rather than discarding it: `npx tsc --noEmit` exits 0, and `npx vitest run test/logger.test.ts` passes **13/13**. On that evidence **4.1 and 4.2 are ticked** and the work committed as a restore point.
+- **4.3 is deliberately left unchecked even though `src/metrics.ts` exists and typechecks.** Nothing has yet proven it registers the full 26-metric catalog with the right names, types, and label sets — that is exactly what 4.4's test establishes. The next iteration must **read the existing `src/metrics.ts` and verify it against design §4.1–§4.5 before trusting it**, correcting any gaps, then write `test/metrics.test.ts` and run the 4.5 gate.
+- No work was lost and no reset was needed; `git reset --hard` would not have removed these files anyway, since they were untracked.
 
 ---
 
