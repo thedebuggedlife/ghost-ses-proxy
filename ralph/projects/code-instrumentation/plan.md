@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 14 complete
-> **Current phase:** Phase 15
+> **Status:** In progress — Phase 15 complete
+> **Current phase:** Phase 16
 
 ---
 
@@ -1214,34 +1214,71 @@ All behavior under test now exists; the legacy implementation is still present a
 
 ### Tasks
 
-- [ ] **15.1** Set up the contract harness
+- [x] **15.1** Set up the contract harness
   - File: `test/helpers/normalize.ts`
   - `require` the single normalizer implementation from `scripts/normalize.cjs` rather than reimplementing it (Design Decision P9): `const { normalize, normalizeJson } = require('../../scripts/normalize.cjs') as { … };` One implementation means a drifting normalizer is impossible.
   - **Every supertest request in this file sets `Host: localhost:3003`** — `.set('Host', 'localhost:3003')` (Design Decision P8). `lib/events-api.js:129` builds `paging.next` from `req.headers.host`, and supertest binds an ephemeral port; without a pinned Host the captured URL can never reproduce, and design §8.4 forbids normalizing it.
 
-- [ ] **15.2** Assert the non-HTTP captures
+- [x] **15.2** Assert the non-HTTP captures
   - File: `test/contract.test.ts`
   - `mapSesEvent` output matches `captured/event-map-*.json` for every input in `captured/ses-event-inputs.json`.
   - `substituteVars` matches `captured/template-vars.json`.
   - `PRAGMA table_info` and `PRAGMA index_list` for all four tables match `captured/schema.json` — this is what guarantees the new build reads the existing `/data` volume unchanged.
 
-- [ ] **15.3** Assert the HTTP captures
+- [x] **15.3** Assert the HTTP captures
   - File: `test/contract.test.ts`
   - Seed the database from `captured/events-seed.json` and `captured/suppressions-seed.json` — the same fixed-id rows the capture used — so the `paging.next` cursor is a genuine reproducible assertion (Design Decision P7).
   - **The `/health` assertion runs against that seed and nothing else** — no `message_map` or `recipient_emails` rows, because the capture recorded `/health` before any send scenario ran (critique finding 7). The `_precondition` key in `captured/http-health.json` names the two seed files; honor it by running this assertion in a fresh database before the send assertions, not after.
   - Events, suppression, and send response bodies and status codes match `captured/http-*.json`, driven through supertest against `createApp(makeDeps())`.
   - **MIME:** replay the request field maps from `captured/send-scenarios.json` through supertest with `aws-sdk-client-mock` intercepting `SendRawEmailCommand`, and compare `input.RawMessage.Data.toString('utf8')` against `captured/mime-*.txt` under the normalizers. **Do not call `buildRawMime` directly** — the fixtures are the output of the whole pipeline (busboy parse → substitution → placeholder stripping → header collection → `buildRawMime`), so a direct unit call would require hand-reconstructing the computed options and would converge on "whatever makes it pass" (critique finding 3). The mock must return the same fixed `MessageId` the capture used.
 
-- [ ] **15.4** Assert against `test/golden/intent/`
+- [x] **15.4** Assert against `test/golden/intent/`
   - File: `test/contract.test.ts`
   - Ignore each fixture's `_meta` key. Each of these **fails if the rewrite accidentally preserved the defect**: a 200-day-old suppression survives cleanup while the other three tables purge at 90 days (D2); a redelivered SQS message inserts no duplicate event row and the id is the specified sha256 prefix (D3); `?event=a&event=b` returns 200 honoring the first value rather than 500 (D4); `limit=99999999` clamps to 1000 (D4); a throw inside the per-recipient send path releases its semaphore slot and the batch completes as `partial` with a 200 (D1); a `Delivery` payload with no `delivery` block maps to `[]` and the poller deletes the message and counts `malformed_payload` rather than throwing and leaving it queued (D7).
   - These overlap with the per-module regression tests by design — the module tests catch a local regression, these catch the contract-level one.
 
-- [ ] **15.5** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **15.5** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All five tasks done; the gate is green — `typecheck` clean, `build` emits `dist/*.js` (still no `dist/src/`), `test:coverage` runs **536 tests across 21 files** at **100% statements / branches / functions / lines**. `test/contract.test.ts` contributes **67** of those tests and every one passed on its first run — expected, since Phases 5, 7, 8, 13 and 14 each verified their slice of the golden set as they landed. The value of this phase is therefore not "did it find a bug" but "is the contract now asserted in one place, and can it fail".
+
+**Files added.** `test/helpers/normalize.ts`, `test/contract.test.ts`. No `src/` file was touched.
+
+**Non-vacuity was proved by mutation, not by inspection.** A suite that passes on the first run is indistinguishable from a suite that asserts nothing, so each defect fix was deliberately reverted in `src/` and the contract suite re-run:
+
+| Mutation | Contract tests failed |
+|---|---|
+| `MAX_LIMIT` 1000 → 999 | 2 |
+| `firstString` → `v as string` (D4 un-fixed) | 4 |
+| `eventId` `.slice(0,32)` → `.slice(0,31)` (D3) | 1 |
+| `malformed_payload` counter → `events_skipped_total` (D7) | 2 |
+| `CLEANUP_TABLES` includes `suppressions` (D2) | 1 |
+| `'Queued. Thank you.'` → `'Queued! Thank you.'` | 6 |
+| `MIME-Version: 1.0` → `1.1` | 7 |
+
+Every mutation was reverted with `git checkout src` and the suite returned to 67 passing.
+
+**Deviation 1 — `clampLimit` is asserted directly, not only through HTTP.** The first mutation run exposed a real hole: `MAX_LIMIT = 999` changed *nothing observable* over HTTP, because the seed is 7 rows and every clamped bound (1000, 999, 300) returns all of them. `d4-limit-clamp.json` records an `effectiveLimit` per case precisely because it is not derivable from the response, so the test now parses the `limit` parameter out of the fixture's own path and asserts `clampLimit(raw) === expected.effectiveLimit` **in addition to** the HTTP round trip. Without that line the `above-maximum` and `exactly-maximum` cases were decorative.
+
+**Deviation 2 — `test/helpers/normalize.ts` reaches `scripts/normalize.cjs` through `createRequire(__filename)`.** The plan's snippet uses a bare `require`, which is not in scope in a vite-node-transformed ESM module. `createRequire` from `node:module` is the equivalent that typechecks under `module: commonjs` and resolves the `.cjs` file through Node rather than through Vite. The exported surface is `normalize` (string) and `normalizeValue<T>(v: unknown): T` — the latter is `normalizeJson` with a call-site-supplied return type, because the underlying implementation is a `JSON.parse` round trip and typing it `<T>(v: T) => T` would be a lie for a caller comparing against a fixture. Still exactly one implementation, per P9.
+
+**Fixture coverage is derived from the directory, not from a hand-written list.** `readdirSync(captured/)` drives the `it.each` for `http-events-*`, `http-send-*` and `mime-*`, and three extra assertions check the derived sets against the fixture inventory (`event-map-*` ↔ `sesFixtureNames`, the four suppression files, and every `mime-*` scenario appearing in some `http-send-*`). A future capture that adds a fixture therefore gets asserted automatically instead of being silently ignored — which is the failure mode a restated scenario table has.
+
+**MIME file grouping.** `^mime-(.*)-(\d+)\.txt$` with a greedy first group splits `mime-all-recipients-fail-1.txt` into scenario `all-recipients-fail` / index `1` correctly; the index is always the trailing segment. The list is stored index-addressed so `ses.calls[i]` lines up with `mime-<scenario>-<i>.txt`, which is the `toList` order (Phase 1's determinism note).
+
+**Suppression fixtures are replayed sequentially in one test, in capture order.** `bounces-encoded` → `plus-literal` → `complaints` → `unknown-type` against a single seeded app, because the capture ran them against one database and the second request deliberately hits an already-deleted row. The handler returns 200 regardless of whether a row was deleted, so this pins path decoding rather than deletion — asserting it out of order would still pass and would quietly stop testing what Phase 1 intended.
+
+**The `/health` assertion re-checks the fixture's own `_precondition`.** Before the request it asserts `_precondition.expectedCounts` equals the counts implied by the two seed files (`events: eventsSeed.length`, `suppressions: suppressionsSeed.length`, both correlation tables 0). If a future edit to `events-seed.json` changes the row count, the precondition check fails loudly instead of the body comparison failing with an opaque diff.
+
+**The default SES stub message id is kept for the canonical two-recipient replay.** Phase 13 warned that a constant `messageId` collapses N recipients into one `recipient_emails` row. That is what the capture harness did too (one fixed `SES_MESSAGE_ID` for every call), and the captured response body carries only `id` and `message`, so reproducing the capture faithfully means *keeping* the constant. The collapse is asserted nowhere here; `test/routes/send-email.test.ts` owns the per-recipient row assertions with unique ids.
+
+**`vi.mock('../src/mime')` is file-scoped and gated by a `vi.hoisted` set.** Same technique as `test/routes/send-email.test.ts`: `buildRawMime` delegates to the real implementation unless the recipient is in `throwForRecipients`, which is cleared in a global `beforeEach`. So the D1 induced throw and the byte-exact MIME assertions coexist in one file without interfering.
+
+**Notes for Phase 16.**
+- `test/contract.test.ts` opens several `:memory:` databases per test via a `newDeps()` wrapper that pushes onto an `openDeps` array closed in `afterEach`. Reuse that pattern rather than a single `beforeEach` deps if a later test needs two configs in one case.
+- `mockClient(SQSClient)` is installed at module scope and reset per test; `SqsPoller.stop()` is called explicitly in every poller test so no fake or real timer leaks.
+- Nothing in this phase constrains the shutdown sequence. The one thing Phase 16 must not do is add logic to `src/index.ts` — the contract suite cannot reach it and it is coverage-excluded (Design Decision P13).
 
 ---
 
