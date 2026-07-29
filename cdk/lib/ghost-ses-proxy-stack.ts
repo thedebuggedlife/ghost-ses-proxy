@@ -1,5 +1,14 @@
-import { CfnOutput, Duration, Stack, type StackProps } from 'aws-cdk-lib';
+import {
+  CfnOutput,
+  Duration,
+  RemovalPolicy,
+  SecretValue,
+  Stack,
+  type StackProps,
+} from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ses from 'aws-cdk-lib/aws-ses';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
@@ -29,6 +38,9 @@ export class GhostSesProxyStack extends Stack {
   public readonly deadLetterQueue?: sqs.Queue;
   public readonly configurationSet: ses.ConfigurationSet;
   public readonly emailIdentity: ses.EmailIdentity;
+  public readonly user: iam.User;
+  public readonly accessKey: iam.AccessKey;
+  public readonly credentialsSecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: GhostSesProxyStackProps) {
     super(scope, id, props);
@@ -107,10 +119,45 @@ export class GhostSesProxyStack extends Stack {
       }
     }
 
+    this.user = new iam.User(this, 'ProxyUser', { userName: cfg.iamUserName });
+    this.user.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendRawEmail'],
+        resources: [
+          this.emailIdentity.emailIdentityArn,
+          this.formatArn({
+            service: 'ses',
+            resource: 'configuration-set',
+            resourceName: this.configurationSet.configurationSetName,
+          }),
+        ],
+      }),
+    );
+    this.user.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes'],
+        resources: [this.queue.queueArn],
+      }),
+    );
+
+    this.accessKey = new iam.AccessKey(this, 'ProxyAccessKey', {
+      user: this.user,
+      serial: cfg.accessKeySerial,
+    });
+    this.credentialsSecret = new secretsmanager.Secret(this, 'ProxyCredentials', {
+      secretName: cfg.credentialsSecretName,
+      secretObjectValue: {
+        accessKeyId: SecretValue.unsafePlainText(this.accessKey.accessKeyId),
+        secretAccessKey: this.accessKey.secretAccessKey,
+      },
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
     new CfnOutput(this, 'SqsQueueUrl', { value: this.queue.queueUrl });
     new CfnOutput(this, 'SesConfigurationSet', { value: this.configurationSet.configurationSetName });
     new CfnOutput(this, 'SendingDomain', { value: cfg.sesDomain });
     new CfnOutput(this, 'AwsRegion', { value: this.region });
+    new CfnOutput(this, 'CredentialsSecretArn', { value: this.credentialsSecret.secretArn });
 
     if (!hostedZone) {
       this.emailIdentity.dkimRecords.forEach((record, index) => {

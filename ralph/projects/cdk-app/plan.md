@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 4 (Phase 3 complete)
+> **Current phase:** Phase 5 (Phase 4 complete)
 
 ---
 
@@ -248,23 +248,36 @@ Confirmed as designed:
 
 ### Tasks
 
-- [ ] **4.1** Add IAM user with scoped inline policies
+- [x] **4.1** Add IAM user with scoped inline policies
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - Per design §3: user named `config.iamUserName`; policy 1: `ses:SendRawEmail` on `[identity.emailIdentityArn, configurationSet.configurationSetArn]`; policy 2: `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes` on `[queue.queueArn]`.
 
-- [ ] **4.2** Add access key and secret
+- [x] **4.2** Add access key and secret
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - `iam.AccessKey` with `serial: config.accessKeySerial`; `secretsmanager.Secret` named `config.credentialsSecretName` with `secretObjectValue: { accessKeyId: SecretValue.unsafePlainText(accessKey.accessKeyId), secretAccessKey: accessKey.secretAccessKey }` and `removalPolicy: RemovalPolicy.DESTROY` (design §3 teardown note). Add `CredentialsSecretArn` output.
 
-- [ ] **4.3** IAM + secret tests
+- [x] **4.3** IAM + secret tests
   - File: `cdk/test/stack.test.ts`
   - Assertions per design Test Plan: user policy scopes SES actions to identity + config set ARNs (not `*`) and SQS actions to the queue ARN; `AWS::IAM::AccessKey` with `Serial`; secret exists and the synthesized template JSON contains no literal secret-access-key material (assert the secret's `SecretString`/`GenerateSecretString` references the access key attribute via `Fn::GetAtt`, e.g. by matching the template JSON string for `SecretAccessKey`); all five always-present outputs now exist (`SqsQueueUrl`, `SesConfigurationSet`, `SendingDomain`, `AwsRegion`, `CredentialsSecretArn`) — this guards the generate-env contract.
 
-- [ ] **4.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **4.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (2 files, 72 tests — 34 config + 38 stack), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with all AWS credential/region env vars explicitly unset.
+
+**Implementation notes / decisions:**
+- **Config set ARN built with `this.formatArn`** (Phase 3 observation #1: `configurationSetArn` does not exist in `aws-cdk-lib` 2.262.1). `formatArn({ service: 'ses', resource: 'configuration-set', resourceName: this.configurationSet.configurationSetName })` synthesizes to `arn:<partition>:ses:<region>:<account>:configuration-set/<Ref ConfigSet>`. The identity ARN uses `emailIdentity.emailIdentityArn` as designed → `…:identity/<Ref Identity>`.
+- **`user.addToPolicy` produces a single `AWS::IAM::Policy`** (`ProxyUserDefaultPolicy…`) with both statements, not two separate policies — tests assert on statements within the one policy resource.
+- **Secret synthesis shape (relevant to Phase 5):** `SecretString` is an `Fn::Join` of exactly `['{"accessKeyId":"', {Ref: <accessKey>}, '","secretAccessKey":"', {'Fn::GetAtt': [<accessKey>, 'SecretAccessKey']}, '"}']`. So `GetSecretValue` returns JSON `{ "accessKeyId": ..., "secretAccessKey": ... }` — exactly the keys `generate-proxy-env.ts` must parse. No `GenerateSecretString` is emitted.
+- **`removalPolicy: RemovalPolicy.DESTROY`** emits both `DeletionPolicy: Delete` and `UpdateReplacePolicy: Delete`; the test asserts both.
+- **`CredentialsSecretArn` output value is `{ Ref: <secretLogicalId> }`** — `AWS::SecretsManager::Secret`'s `Ref` *is* the ARN. The output test matches on the Ref, not a `Fn::GetAtt`.
+- Stack now also exposes `public readonly user`, `accessKey`, `credentialsSecret`.
+- The Phase 3 test "drops the manual DNS outputs entirely" asserted an exact sorted output-key list; `CredentialsSecretArn` was added to it. Future phases adding always-present outputs must update that list too.
+- Added a `never grants a wildcard resource` test that walks every statement in the synthesized policy — it guards against a future refactor regressing to `Resource: '*'`.
+- Added an "always emits the five outputs the generate-env script depends on" test that runs for both the no-zone and hosted-zone cases, since the DNS outputs are conditional but these five must not be.
+
+**Files modified:** `cdk/lib/ghost-ses-proxy-stack.ts`, `cdk/test/stack.test.ts`.
 
 ---
 

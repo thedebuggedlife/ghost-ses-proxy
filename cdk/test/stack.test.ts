@@ -261,6 +261,7 @@ describe('DNS with a hosted zone', () => {
     }
     expect(Object.keys(outputs).sort()).toEqual([
       'AwsRegion',
+      'CredentialsSecretArn',
       'SendingDomain',
       'SesConfigurationSet',
       'SqsQueueUrl',
@@ -328,6 +329,141 @@ describe('DNS with a hosted zone', () => {
   });
 });
 
+describe('proxy IAM user', () => {
+  it('creates the user with the derived name', () => {
+    makeTemplate().hasResourceProperties('AWS::IAM::User', { UserName: 'ghost-ses-proxy' });
+  });
+
+  it('uses an explicit user name when configured', () => {
+    makeTemplate({ IAM_USER_NAME: 'custom-user' }).hasResourceProperties('AWS::IAM::User', {
+      UserName: 'custom-user',
+    });
+  });
+
+  it('scopes ses:SendRawEmail to the identity and configuration set ARNs', () => {
+    const template = makeTemplate();
+    const identityLogicalId = Object.keys(template.findResources('AWS::SES::EmailIdentity'))[0];
+    const configSetLogicalId = Object.keys(
+      template.findResources('AWS::SES::ConfigurationSet'),
+    )[0];
+
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'ses:SendRawEmail',
+            Effect: 'Allow',
+            Resource: [
+              {
+                'Fn::Join': [
+                  '',
+                  Match.arrayWith([':identity/', { Ref: identityLogicalId }]),
+                ],
+              },
+              {
+                'Fn::Join': [
+                  '',
+                  Match.arrayWith([':configuration-set/', { Ref: configSetLogicalId }]),
+                ],
+              },
+            ],
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('scopes the SQS actions to the queue ARN', () => {
+    const template = makeTemplate();
+    const queueLogicalId = Object.keys(
+      template.findResources('AWS::SQS::Queue', {
+        Properties: { QueueName: 'ghost-ses-proxy-events' },
+      }),
+    )[0];
+
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes'],
+            Effect: 'Allow',
+            Resource: { 'Fn::GetAtt': [queueLogicalId, 'Arn'] },
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('never grants a wildcard resource', () => {
+    const [policy] = Object.values(makeTemplate().findResources('AWS::IAM::Policy'));
+
+    for (const statement of policy.Properties.PolicyDocument.Statement) {
+      expect(statement.Resource).not.toBe('*');
+      expect(Array.isArray(statement.Resource) ? statement.Resource : []).not.toContain('*');
+    }
+  });
+});
+
+describe('access key and credentials secret', () => {
+  it('creates an access key for the user with the configured serial', () => {
+    const template = makeTemplate({ ACCESS_KEY_SERIAL: '3' });
+    const userLogicalId = Object.keys(template.findResources('AWS::IAM::User'))[0];
+
+    template.resourceCountIs('AWS::IAM::AccessKey', 1);
+    template.hasResourceProperties('AWS::IAM::AccessKey', {
+      Serial: 3,
+      UserName: { Ref: userLogicalId },
+    });
+  });
+
+  it('defaults the access key serial to 1', () => {
+    makeTemplate().hasResourceProperties('AWS::IAM::AccessKey', { Serial: 1 });
+  });
+
+  it('stores the key material in a secret that is destroyed with the stack', () => {
+    const template = makeTemplate();
+    const accessKeyLogicalId = Object.keys(template.findResources('AWS::IAM::AccessKey'))[0];
+
+    template.hasResource('AWS::SecretsManager::Secret', {
+      Properties: {
+        Name: 'ghost-ses-proxy/credentials',
+        SecretString: {
+          'Fn::Join': [
+            '',
+            Match.arrayWith([
+              { Ref: accessKeyLogicalId },
+              { 'Fn::GetAtt': [accessKeyLogicalId, 'SecretAccessKey'] },
+            ]),
+          ],
+        },
+      },
+      DeletionPolicy: 'Delete',
+      UpdateReplacePolicy: 'Delete',
+    });
+  });
+
+  it('uses an explicit secret name when configured', () => {
+    makeTemplate({ CREDENTIALS_SECRET_NAME: 'custom/creds' }).hasResourceProperties(
+      'AWS::SecretsManager::Secret',
+      { Name: 'custom/creds' },
+    );
+  });
+
+  it('resolves the secret access key at deploy time rather than embedding it', () => {
+    const template = makeTemplate();
+    const accessKeyLogicalId = Object.keys(template.findResources('AWS::IAM::AccessKey'))[0];
+    const [secret] = Object.values(template.findResources('AWS::SecretsManager::Secret'));
+    const parts: unknown[] = secret.Properties.SecretString['Fn::Join'][1];
+
+    expect(parts).toContainEqual({ 'Fn::GetAtt': [accessKeyLogicalId, 'SecretAccessKey'] });
+    expect(parts.filter((part) => typeof part === 'string')).toEqual([
+      '{"accessKeyId":"',
+      '","secretAccessKey":"',
+      '"}',
+    ]);
+  });
+});
+
 describe('always-present outputs', () => {
   it('exposes the configuration set, sending domain and region', () => {
     const template = makeTemplate();
@@ -342,5 +478,31 @@ describe('always-present outputs', () => {
 
   it('reflects a non-default region', () => {
     makeTemplate({ AWS_REGION: 'eu-west-1' }).hasOutput('AwsRegion', { Value: 'eu-west-1' });
+  });
+
+  it('outputs the credentials secret ARN', () => {
+    const template = makeTemplate();
+    const secretLogicalId = Object.keys(
+      template.findResources('AWS::SecretsManager::Secret'),
+    )[0];
+
+    template.hasOutput('CredentialsSecretArn', { Value: { Ref: secretLogicalId } });
+  });
+
+  it('always emits the five outputs the generate-env script depends on', () => {
+    for (const options of [{}, WITH_ZONE]) {
+      const envOverrides = options === WITH_ZONE ? ZONE_ENV : {};
+      const outputs = makeTemplate(envOverrides, options).toJSON().Outputs ?? {};
+
+      for (const key of [
+        'SqsQueueUrl',
+        'SesConfigurationSet',
+        'SendingDomain',
+        'AwsRegion',
+        'CredentialsSecretArn',
+      ]) {
+        expect(outputs[key]).toBeDefined();
+      }
+    }
   });
 });
