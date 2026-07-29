@@ -1,8 +1,8 @@
 # CDK Infrastructure App — Execution Plan
 
 > **Design document:** [design.md](./design.md)
-> **Status:** In progress
-> **Current phase:** Phase 7 (Phase 6 complete)
+> **Status:** Complete
+> **Current phase:** All phases complete (Phase 7 done)
 
 ---
 
@@ -372,28 +372,49 @@ Confirmed as designed:
 
 ### Tasks
 
-- [ ] **7.1** Add `cdk-test` job to CI
+- [x] **7.1** Add `cdk-test` job to CI
   - File: `.github/workflows/ci.yml`
   - Add the job exactly per design §9 YAML: `working-directory: cdk` default, checkout, `setup-node` (Node 20, npm cache keyed on `cdk/package-lock.json`), `npm ci`, `npm test`, `SES_DOMAIN=example.com npx cdk synth --quiet`. No `paths:` filter (design §9 — a sometimes-skipped required check blocks merges). Do not modify the existing `docker-build` job.
 
-- [ ] **7.2** Sanity-check the workflow file
+- [x] **7.2** Sanity-check the workflow file
   - File: `.github/workflows/ci.yml`
   - Validate YAML parses (e.g. `node -e "..."` with a YAML parse via `npx js-yaml .github/workflows/ci.yml` or python `yaml.safe_load`). Confirm job names: `docker-build`, `cdk-test`.
 
-- [ ] **7.3** Design compliance pass
+- [x] **7.3** Design compliance pass
   - Re-read `ralph/projects/cdk-app/design.md` end-to-end. Verify: every row of the design's Files Changed table exists with the described content; `.gitignore` has the three new entries; no changes outside the listed files (`git status` — in particular `server.js`, `lib/*.js`, `Dockerfile`, root `package.json` untouched); stack outputs match the §4 table keys exactly; `cdk/.env.example` covers every §2 variable.
 
-- [ ] **7.4** Code review pass
+- [x] **7.4** Code review pass
   - Review `cdk/lib/*.ts`, `cdk/bin/*.ts`, `cdk/scripts/*.ts` for: no secrets or account IDs hardcoded; error messages actionable; comments follow repo convention (none unless a non-obvious why); consistent naming with the design (§2 config names, §4 output keys).
 
-- [ ] **7.5** Record the maintainer note
+- [x] **7.5** Record the maintainer note
   - In this phase's Observations, record: "Maintainer action required: add `cdk-test` to the required status checks for the `dev` branch (GitHub → Settings → Branch protection). Not enforceable from the codebase." (design §9)
 
-- [ ] **7.6** Final build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **7.6** Final build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (3 files, 88 tests — unchanged from Phase 5/6), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN` all explicitly unset. Whole chain re-run with an explicit exit-code check: `GATE_EXIT=0`.
+
+**MAINTAINER ACTION REQUIRED:** add `cdk-test` to the required status checks for the `dev` branch (GitHub → Settings → Branch protection). Not enforceable from the codebase. The job runs and reports on every PR regardless; only merge *blocking* needs the settings change. Consider adding the existing `docker-build` job at the same time.
+
+**Task 7.1 — CI job:** added verbatim per design §9, with named steps (`Install dependencies` / `Run tests` / `Synthesize without AWS credentials`) instead of the design's bare `- run:` lines — cosmetic only, it makes the GitHub Actions log readable. No `paths:` filter and no change to the workflow-level `on:` trigger, so the job gates exactly the same PRs as `docker-build`. `docker-build` was not touched.
+
+**Task 7.2 — validation:** `yaml.safe_load` via `python3` parses the file; jobs are exactly `['docker-build', 'cdk-test']`. (`npx js-yaml` was not used — no such binary in the root package, and the root `package.json` must not be touched.)
+
+**Task 7.3 — design compliance:**
+- Every row of the design's Files Changed table exists. All 13 `cdk/` files present (`bin/cdk-app.ts`, `lib/config.ts`, `lib/ghost-ses-proxy-stack.ts`, `scripts/generate-proxy-env.ts`, 3 test files, `package.json`, `package-lock.json`, `tsconfig.json`, `cdk.json`, `vitest.config.ts`, `.env.example`).
+- **`.gitignore` has two new entries, not three.** Task 7.3's wording ("the three new entries") is stale — design §"What changes" and the Files Changed table both specify only `cdk/cdk.out/` and `cdk/cdk.context.json`, because the existing unanchored `.env` pattern already covers `cdk/.env`. Verified: the file is exactly `node_modules/`, `data/`, `.env`, `cdk/cdk.out/`, `cdk/cdk.context.json`. No discrepancy with the design.
+- **No changes outside the listed files.** `git diff --name-only <merge-base>..HEAD` plus working-tree status covers only `.gitignore`, `README.md`, `.github/workflows/ci.yml`, the 13 `cdk/` files, and the `ralph/projects/cdk-app/*.md` planning docs. `server.js`, `lib/*.js`, `Dockerfile`, `docker-compose.example.yml`, root `package.json` and root `.env.example` are all untouched.
+- **Stack outputs match the §4 table keys exactly**: always-present `SqsQueueUrl`, `SesConfigurationSet`, `SendingDomain`, `AwsRegion`, `CredentialsSecretArn`; no-hosted-zone-only `DkimCnameName1..3`/`DkimCnameValue1..3` and (with MAIL FROM) `MailFromMxRecord`/`MailFromSpfRecord`. No extras, no renames.
+- **`cdk/.env.example` covers all 15 §2 variables**, only `SES_DOMAIN` uncommented.
+
+**Task 7.4 — code review:** no secrets, account IDs, or region literals hardcoded anywhere in `bin/`, `lib/`, `scripts/` (the `123456789012` fixture account lives only in `test/stack.test.ts`, which is correct). Error messages all name the offending variable and the corrective action ("run \"npx cdk deploy\" first", "set AWS_ACCOUNT_ID in cdk/.env or configure AWS credentials"). Exactly one comment exists across the three directories — the single line at `lib/ghost-ses-proxy-stack.ts:98` explaining why `CfnRecordSet` replaces `CnameRecord` for DKIM — which matches the repo convention (comment only a non-obvious why, one line). Config field names and output keys are consistent with design §2/§4.
+
+**Two things a reviewer might flag, both deliberate and left as-is:**
+- `lib/config.ts:127` uses `sesDomain as string`. Safe: the `errors.length > 0` throw above it guarantees `sesDomain` is defined by that point. A non-null assertion or a narrowing refactor would add noise for no behaviour change.
+- `scripts/generate-proxy-env.ts` exports more than the plan's two functions. Justified in the Phase 5 observations (the content↔lines split is what makes the byte-identical idempotency test possible).
+
+**Files modified:** `.github/workflows/ci.yml`.
 
 ---
 
