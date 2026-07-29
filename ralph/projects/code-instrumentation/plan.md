@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 4 complete
-> **Current phase:** Phase 5
+> **Status:** In progress — Phase 5 complete
+> **Current phase:** Phase 6
 
 ---
 
@@ -553,12 +553,12 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
 
 ### Tasks
 
-- [ ] **5.1** Extract the DDL
+- [x] **5.1** Extract the DDL
   - File: `src/schema.ts`
   - Port the four `CREATE TABLE IF NOT EXISTS` statements and the five `CREATE INDEX IF NOT EXISTS` statements from `lib/db.js` **verbatim** — same table names, column names, types, defaults, and the `UNIQUE(email, type)` constraint on `suppressions`. The new build must open the existing `/data` volume unchanged; Phase 15's contract test asserts this against `captured/schema.json`.
   - Export `applySchema(raw: Database.Database): void`.
 
-- [ ] **5.2** Implement the database factory
+- [x] **5.2** Implement the database factory
   - File: `src/db.ts`
   - `createDb(path: string, logger: Logger, metrics: Metrics): Db` — the third parameter extends design §2's signature so `db_errors_total{operation}` has a home (Design Decision P3).
   - Opens the database, applies `journal_mode = WAL` and `busy_timeout = 5000` as `lib/db.js` does, calls `applySchema`, prepares the statements, returns `{ raw, insertMessageMap, insertRecipientEmail, insertEvent, insertSuppression, deleteSuppression, lookupRecipientEmail, close() }`.
@@ -566,15 +566,46 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
   - `INSERT OR IGNORE` semantics are preserved on all inserts.
   - Do **not** register the cleanup interval here — that is `scheduleCleanup` in Phase 6, wired by `index.ts` in Phase 16.
 
-- [ ] **5.3** Test the database factory
+- [x] **5.3** Test the database factory
   - File: `test/db.test.ts`
   - Schema creates all four tables and all five indexes; `INSERT OR IGNORE` dedupes on each unique constraint (`message_map.batch_message_id`, `recipient_emails.ses_message_id`, `events.id`, `suppressions(email, type)`); `lookupRecipientEmail` round-trips a row; `close()` releases the handle; a failing statement increments `db_errors_total` with a bounded `operation` label and rethrows. All against `':memory:'`.
 
-- [ ] **5.4** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **5.4** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All four tasks done; the gate is green — `typecheck` clean, `build` emits `dist/{config,db,logger,metrics,schema,types}.js` (still no `dist/src/`), `test:coverage` runs **104 tests across 4 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/schema.ts`, `src/db.ts`, `test/db.test.ts` (18 tests). No existing file was modified.
+
+**`src/schema.ts` shape.** Two module-private arrays (`TABLES`, `INDEXES`) applied in order by `applySchema(raw)`, plus exported `TABLE_NAMES` and `INDEX_NAMES` const tuples so tests (and Phase 6's cleanup, Phase 15's contract test) can iterate the schema without restating the names. The DDL is a content-verbatim port; only whitespace differs (multi-line template literals instead of `lib/db.js`'s string concatenation), which changes `sqlite_master.sql` but **not** `PRAGMA table_info` / `PRAGMA index_list` — the two PRAGMAs are what `captured/schema.json` pins.
+
+**Statement ordering deviation.** `lib/db.js` interleaves table and index creation (`message_map` → `recipient_emails` → its 2 indexes → `events` → its 3 indexes → `suppressions`); `applySchema` does all four tables then all five indexes. Index **creation order among indexes on the same table is preserved**, which is the part that matters: `PRAGMA index_list` reports newest-first, so `recipient_emails` must yield `recipient, batch, sqlite_autoindex` and `events` must yield `message, type, timestamp, sqlite_autoindex` to match `captured/schema.json`. Do not reorder `INDEXES`.
+
+**`src/db.ts` shape.** `createDb(path, logger, metrics)` opens the handle, sets `journal_mode = WAL` + `busy_timeout = 5000`, calls `applySchema`, and prepares the six statements into a `Record<DbOperation, Statement<unknown[]>>` keyed by the bounded `DbOperation` union from `src/types.ts` — so the `db_errors_total{operation}` label is drawn from the map key and cannot be a free-form string (P3). A single `guard(operation, fn)` wrapper is the only place that increments `dbErrorsTotal`, logs at `error` with `component: 'db'`, and rethrows. The logger is bound once via `logger.child({ component: 'db' })`.
+
+**Deviation — `run()` returns `changes` for every write, not just `deleteSuppression`.** `Db.deleteSuppression` returns `number` per `src/types.ts`; rather than special-case it, the shared `run()` helper returns `stmt.run(...).changes` and the void-returning methods discard it. Phase 14's suppression route may want the same signal from `insertSuppression` later; it is already available without touching `db.ts`.
+
+**Discovery that changed a test — `INSERT OR IGNORE` swallows constraint violations, including `NOT NULL`.** The planned assertion "a failing statement increments `db_errors_total`" cannot be provoked by a constraint violation on any of the four inserts: `INSERT OR IGNORE` is exactly the clause that suppresses them. Verified by an actual failing run, not by inspection — `db.insertRecipientEmail('ses-1','batch-1', null as unknown as string, null, null)` threw nothing and inserted nothing:
+
+```
+AssertionError: expected [Function] to throw an error
+ ❯ test/db.test.ts:270  ).toThrow(/NOT NULL constraint failed/);
+```
+
+The test was rewritten to pin that as behavior (no throw, no row, `db_errors_total` untouched) and the error paths are provoked instead by `DROP TABLE` before the call, which produces a genuine `no such table` at statement execution. **Consequence for later phases:** `db_errors_total` will realistically only fire on disk/corruption/locking faults and schema drift — a rising counter is never "bad input", so it warrants a different alert response than a parse-error counter.
+
+**Other behaviors now pinned by `test/db.test.ts`.**
+- `suppressions` dedupes on `(email, type)` but the *same* address under a different `type` is a separate row — the `UNIQUE(email, type)` constraint, not `UNIQUE(email)`.
+- `events` dedupes on `id` alone, which is the precondition D3's content hash relies on (Phase 14).
+- The first write wins on every `INSERT OR IGNORE` (later values are discarded, not merged).
+- `close()` sets `raw.open` to `false` and a subsequent statement throws `The database connection is not open`.
+- `lookupRecipientEmail` returns `undefined` for an unknown id (not `null`).
+
+**Notes for Phase 6.**
+- `runCleanup` should iterate `TABLE_NAMES` minus `suppressions` rather than restating the three table names — but note `TABLE_NAMES` is ordered `message_map, recipient_emails, events, suppressions`, so a `.filter()` is required; do not `.slice(0, 3)`.
+- `createDb` deliberately registers **no** timer (the plan's 5.2 instruction), so `scheduleCleanup` is the only place a `setInterval` exists and Phase 6.3's fake-timer test sees exactly one.
+- `test/db.test.ts` builds its own harness inline (pino → in-memory array, fresh `Registry`, `createDb(':memory:')`) with an `afterEach` that closes every handle it opened. Phase 9.5's `makeDeps()` supersedes this; the inline version was kept local rather than promoted early because `makeDeps` also needs `stats` and a mocked `ses`, neither of which exists yet.
 
 ---
 
