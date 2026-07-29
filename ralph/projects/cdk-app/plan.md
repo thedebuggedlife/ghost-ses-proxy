@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 5 (Phase 4 complete)
+> **Current phase:** Phase 6 (Phase 5 complete)
 
 ---
 
@@ -287,24 +287,41 @@ Confirmed as designed:
 
 ### Tasks
 
-- [ ] **5.1** Implement the merge logic as pure functions
+- [x] **5.1** Implement the merge logic as pure functions
   - File: `cdk/scripts/generate-proxy-env.ts`
   - Export `mergeEnvFile(existingLines: string[], managed: Record<string, string>): string[]` per design §5: managed keys replaced in place, missing ones appended; comments/blank/unknown lines passed through verbatim, order preserved. Export `ensureProxyApiKey(lines: string[]): string[]` (or fold into merge): preserve existing `PROXY_API_KEY`, else append one from `crypto.randomBytes(32).toString('hex')`.
   - Managed keys: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `SQS_QUEUE_URL`, `SES_CONFIGURATION_SET`, `MAILGUN_DOMAIN`.
 
-- [ ] **5.2** Implement `main()`
+- [x] **5.2** Implement `main()`
   - File: `cdk/scripts/generate-proxy-env.ts`
   - Per design §5 flow: `dotenv.config()` + `parseConfig` (for `stackName`/`awsRegion`); CloudFormation `DescribeStacks` → outputs map, with the "run npx cdk deploy first" error when the stack is missing; `GetSecretValue` on the `CredentialsSecretArn` output → parse JSON `{ accessKeyId, secretAccessKey }`; managed values assembled from outputs (`MAILGUN_DOMAIN` ← `SendingDomain`, `SES_CONFIGURATION_SET` ← output, `SQS_QUEUE_URL` ← output, `AWS_REGION` ← config); read target file if present, merge, write with mode `0o600`. `--out <path>` flag, default `../.env` relative to `cdk/`. Print which keys were written/preserved — never secret values. Guard `main()` behind `if` so importing the module for tests doesn't execute it (e.g. only run when invoked directly). Note: `parseConfig` deliberately imposes no account requirement, so this script works for Route53 users outside the CDK CLI (design §2; guarded by a Phase 1 test).
 
-- [ ] **5.3** Unit tests for merge logic
+- [x] **5.3** Unit tests for merge logic
   - File: `cdk/test/generate-proxy-env.test.ts`
   - Per design Test Plan: empty input → all managed keys + generated `PROXY_API_KEY`; existing file → values replaced in place, comments/order/`PORT`/unknown keys verbatim, existing `PROXY_API_KEY` untouched; double-merge idempotency (second run byte-identical). AWS calls in `main()` are not unit-tested (design decision — keep `main()` thin).
 
-- [ ] **5.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **5.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (3 files, 88 tests — 34 config + 38 stack + 16 generate-proxy-env), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with all AWS credential/region/profile env vars explicitly unset.
+
+**Implementation notes / decisions:**
+- **Exports beyond the plan's two functions:** `MANAGED_KEYS`, `PROXY_API_KEY`, `parseEnvContent`, `formatEnvFile`, `mergeEnvFile`, `generateApiKey`, `hasProxyApiKey`, `ensureProxyApiKey`, `main`. Splitting content↔lines conversion out of the merge is what makes the byte-identical idempotency test possible. `formatEnvFile` always emits a trailing newline (empty line array → empty string).
+- **`ensureProxyApiKey(lines, generate = generateApiKey)`** takes an injectable generator so tests are deterministic; production callers use the default (`crypto.randomBytes(32).toString('hex')`).
+- **Assignment detection** is `/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/`. Commented-out assignments (`# AWS_REGION=…`) are therefore *not* matched — they pass through verbatim and the managed key is appended, which is the correct behaviour for a user who copied `.env.example`.
+- **All duplicates of a managed key are rewritten**, not just the first. dotenv's last-wins semantics mean rewriting only the first occurrence could leave a stale value in effect.
+- **`import 'dotenv/config'` deliberately avoided** — the test file imports this module, and a top-level side effect would load a developer's `cdk/.env` into `process.env` for the whole vitest run. `loadDotenv()` is called inside `main()` instead.
+- **Main guard:** `import.meta.url === pathToFileURL(process.argv[1]).href` (the package is `"type": "module"`, so `require.main` is unavailable — flagged in the Phase 0 observations). Verified live: `npx tsx scripts/generate-proxy-env.ts --bogus` exits 1 with the usage error, and with no `SES_DOMAIN` it exits 1 printing the aggregated `parseConfig` error.
+- **Default `--out`** resolves from `import.meta.url` (`../../.env` → repo root) rather than `process.cwd()`, so it is correct no matter where the script is invoked from. An explicit `--out` (both `--out path` and `--out=path` forms) resolves against cwd.
+- **Output validation:** `fetchStackOutputs` requires `SqsQueueUrl`, `SesConfigurationSet`, `SendingDomain`, `CredentialsSecretArn` and names any that are missing. `AwsRegion` is intentionally *not* required — `AWS_REGION` in the proxy env comes from `config.awsRegion`, matching the plan's mapping.
+- **Stack-not-found detection** is `error.name === 'ValidationError' && /does not exist/i` → "run \"npx cdk deploy\" first". Any other error is rethrown untouched.
+- **File permissions:** `writeFileSync(..., { mode: 0o600 })` only applies the mode when creating a new file, so an explicit `chmodSync(outPath, 0o600)` follows it to cover the overwrite case.
+- **Console output** lists the managed key *names* and whether `PROXY_API_KEY` was preserved or generated — never a value.
+
+**For Phase 6:** the README day-2 section can state that `npm run generate-env` accepts `-- --out <path>`, is safe to re-run (idempotent, preserves `PROXY_API_KEY`, `PORT`, `LOG_LEVEL`, comments and unknown keys), and writes the file `0600`.
+
+**Files added:** `cdk/scripts/generate-proxy-env.ts`, `cdk/test/generate-proxy-env.test.ts`. **Modified:** none.
 
 ---
 
