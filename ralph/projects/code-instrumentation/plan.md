@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 7 complete
-> **Current phase:** Phase 8
+> **Status:** In progress — Phase 8 complete
+> **Current phase:** Phase 9
 
 ---
 
@@ -746,7 +746,7 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
 
 ### Tasks
 
-- [ ] **8.1** Implement the typed semaphore with `runExclusive`
+- [x] **8.1** Implement the typed semaphore with `runExclusive`
   - File: `src/semaphore.ts`
   - `class Semaphore` with `acquire()`, `release()`, readonly `inFlight`, readonly `queueDepth`, and:
     ```ts
@@ -759,32 +759,61 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
   - Note that `runExclusive` **re-throws** after releasing. Releasing the slot is all this class is responsible for; converting a throw into a failed-recipient outcome is Phase 13.1's job, and design §5.1 records why both halves are required.
   - Preserve the existing queueing semantics from `lib/send-email.js`: FIFO, and `release()` hands the slot straight to the next waiter without decrementing below the queued count.
 
-- [ ] **8.2** Test the semaphore
+- [x] **8.2** Test the semaphore
   - File: `test/semaphore.test.ts`
   - Caps concurrency at `max`; queues beyond it; **`runExclusive` releases the slot when the callback throws** (the D1 regression — assert `inFlight` returns to 0, the rejection propagates, and a subsequent `runExclusive` still resolves); releases on resolve; `inFlight` and `queueDepth` track correctly through a queued burst; FIFO ordering.
 
-- [ ] **8.3** Port the MIME builder
+- [x] **8.3** Port the MIME builder
   - File: `src/mime.ts`
   - `buildRawMime(opts: MimeOptions, genBoundary = defaultBoundary): string` — the boundary factory is injectable so tests can pin it; production uses `'----=_Part_' + randomBytes(16).toString('hex')`.
   - Output must match **byte-for-byte** (design "what stays the same"): header order (`From`, `To`, `Subject`, then optional `Reply-To`, `Sender`, `Message-ID`, `List-Unsubscribe`, `List-Unsubscribe-Post`, then custom headers, then `MIME-Version`, then `Content-Type`), `\r\n` joins, base64 `Content-Transfer-Encoding` for both parts, `multipart/alternative` boundary format, and the closing `--<boundary>--` plus trailing empty line.
 
-- [ ] **8.4** Test the MIME builder
+- [x] **8.4** Test the MIME builder
   - File: `test/mime.test.ts`
   - Header order and presence; optional headers omitted when absent; base64 encoding of text and html parts; the boundary appears in `Content-Type` and in both delimiters; custom `h:*` headers included; UTF-8 subject and body round-trip through base64.
 
-- [ ] **8.5** Port multipart form parsing
+- [x] **8.5** Port multipart form parsing
   - File: `src/multipart.ts`
   - `parseFormData(req: Request): Promise<Record<string, string | string[]>>` — port of `lib/send-email.js`'s `parseFormData`. Preserve the array accumulation for exactly `to` and `o:tag`, the `Invalid multipart form-data: <msg>` rejection when busboy construction throws, and the `error` event rejection.
 
-- [ ] **8.6** Test multipart form parsing
+- [x] **8.6** Test multipart form parsing
   - File: `test/multipart.test.ts`
   - Drive a real multipart body (build the request with `supertest` against a throwaway express app, or feed a `Readable` with the right `content-type` header). Assert: single fields land as strings; repeated `to` and `o:tag` accumulate as arrays; a single `to` still yields an array-capable shape the send path can normalize; a missing/invalid `content-type` rejects with the `Invalid multipart form-data` message.
 
-- [ ] **8.7** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **8.7** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All seven tasks done; the gate is green — `typecheck` clean, `build` emits `dist/{cleanup,config,db,event-mapper,logger,metrics,mime,multipart,schema,semaphore,stats,template-vars,types}.js` (still no `dist/src/`), `test:coverage` runs **248 tests across 11 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/semaphore.ts`, `src/mime.ts`, `src/multipart.ts`, `test/semaphore.test.ts` (12 tests), `test/mime.test.ts` (15 tests), `test/multipart.test.ts` (11 tests). **Modified:** `package.json` + `package-lock.json` (one new devDependency — see Deviation 1).
+
+**Deviation 1 — `busboy` does NOT ship its own types; `@types/busboy@^1.5.4` was added as a devDependency.** Design §1 and the Phase 3 note both assert "`busboy`, `uuid`, and both `@aws-sdk/*` packages ship their own types — do not add `@types/*` for them". That is true for `uuid` and the AWS SDK but **false for `busboy@1.6.0`**: its `package.json` has no `types`/`typings` field and there is no `.d.ts` anywhere in the package (verified, not assumed). Without the typings `import Busboy from 'busboy'` is an implicit-`any` error under `strict`. `@types/busboy` declares `export = busboy`, so the default import works via `esModuleInterop`. Correct the design's claim rather than re-deriving this in a later phase.
+
+**Deviation 2 — `Semaphore` uses getters for `inFlight`/`queueDepth`, and the waiter list is named `waiters`.** The plan says "readonly `inFlight`, readonly `queueDepth`"; accessor properties are the only way to expose live counters as read-only without letting callers write them. `max` is a real `readonly` field. `current` and `waiters` are `private`, so Phase 13 physically cannot call `acquire`/`release` around them — it must go through `runExclusive`.
+
+**Legacy queueing semantics preserved exactly.** `release()` decrements then, if a waiter exists, re-increments *before* invoking it — so a handed-off slot never dips the gauge and `inFlight` is never observed below the number of live holders. This is `lib/send-email.js:27-34` unchanged. FIFO comes from `Array.shift()`. The one structural difference is `const next = this.waiters.shift(); if (next)` instead of `if (queue.length > 0)`, forced by `noUncheckedIndexedAccess`; behavior is identical.
+
+**D1 regression coverage is four tests, not one.** (a) an async callback that rejects; (b) a callback that throws **synchronously** — this is the actual D1 shape, since `substituteVars`/`buildRawMime`/`JSON.stringify` throw synchronously before `sendRawEmail` is ever reached, and the legacy `.finally()` was chained onto `sendRawEmail(...)` so it never ran; (c) `max` consecutive failures followed by `max + 1` successful runs, which is the direct "does not wedge" assertion the intent fixture asks for; (d) a queued waiter still gets the slot when the holder throws. Note `runExclusive` **re-throws** — the conversion to a `failed++` outcome is Phase 13.1's job (design §5.1), and none of these tests assert otherwise.
+
+**`src/mime.ts` shape.** `buildRawMime(opts, genBoundary = defaultBoundary)`; `MimeOptions` and `defaultBoundary` are both exported. The body is a line-for-line port of `lib/send-email.js:42-102` — same falsy guards on every optional header (so `''` omits the header, which `mime-no-text-0.txt` depends on), same `lines.join('\r\n')`, same trailing `''` after the closing delimiter. Custom headers iterate `Object.entries`, which has the same insertion order as the legacy `Object.keys` loop.
+
+**Early verification against the golden MIME fixtures.** As in Phase 7, a throwaway `tsx` script (since deleted — Phase 15 owns `test/contract.test.ts`) rebuilt `mime-no-text-0.txt` and `mime-custom-headers-0.txt` from `captured/send-scenarios.json` through the new `buildRawMime` with a pinned boundary, ran `scripts/normalize.cjs`'s `normalize`, and byte-compared: **both MATCH**. So header order, the `h:*` → custom-header mapping order, the `X-Ghost-Email-Id` append position, and the base64 part layout are all already known-good against the capture. A Phase 15 failure on `mime-*.txt` would point at the send route's field assembly, not at `mime.ts`.
+
+**`src/multipart.ts` shape.** `parseFormData(req: Request): Promise<FormFields>` where `FormFields = Record<string, string | string[]>`, plus an exported `ARRAY_FIELDS` (`ReadonlySet<'to' | 'o:tag'>`) replacing the legacy inline `name === 'to' || name === 'o:tag'`. The `'finish'` event is kept even though `@types/busboy` marks it `@deprecated` in favour of `'close'` — the captured behavior was produced by `'finish'` and the two fire at different points; do not "modernize" this without re-capturing.
+
+**Pinned parsing behaviors worth knowing for Phase 13.**
+- A **single** `to` still yields a one-element **array**, so the legacy handler's `if (!Array.isArray(toList)) toList = [toList]` is dead code for `to`/`o:tag` and only defends against a caller passing something else. Phase 13 should keep the normalization anyway, but it is not what makes single-recipient sends work.
+- `to`/`o:tag` are **absent entirely** (not `[]`) when never sent — Phase 13's `fields.to || []` fallback is load-bearing.
+- A repeated **non**-allowlisted field is last-write-wins (`subject` twice keeps the second value).
+- Field values are UTF-8 decoded by busboy; `Résumé — 日本語` round-trips.
+
+**Three distinct failure paths, all covered.** (1) busboy's constructor throws synchronously for an unsupported content type *and* for `multipart/form-data` with no boundary → both reject with the `Invalid multipart form-data: <msg>` wrapper; (2) the `error` event fires for a truncated body (a part opened and never terminated) → rejects with busboy's own error, **unwrapped**, exactly as the legacy code did; (3) a well-formed empty body (`--BOUNDARY--`) resolves `{}` rather than erroring.
+
+**Notes for later phases.**
+- Phase 13 must call `substituteVars(fields['html'] ?? '', vars)` — Phase 7's Deviation 1 left `str: string`, and `parseFormData` can return `undefined` for an absent field.
+- `parseFormData` types `req` as express's `Request`. If Phase 13 or 15 wants to drive it from a bare `Readable`, the structural requirement is only `{ headers, pipe }`; widening the parameter later is safe, but the current type is what the design's `parseFormData(req: Request)` specifies.
+- `Semaphore` has no metrics coupling by design — Phase 13 reads `inFlight`/`queueDepth` to feed `send_in_flight` and `send_queue_depth` (design §4.2). Setting the gauges from inside the class would need a `Metrics` injection the plan does not give it.
 
 ---
 
