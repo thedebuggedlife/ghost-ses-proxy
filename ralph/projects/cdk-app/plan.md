@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 1 (Phase 0 complete)
+> **Current phase:** Phase 2 (Phase 1 complete)
 
 ---
 
@@ -104,28 +104,42 @@ Build a self-contained AWS CDK TypeScript package under `cdk/` that provisions a
 
 ### Tasks
 
-- [ ] **1.1** Implement `CdkAppConfig` and `parseConfig`
+- [x] **1.1** Implement `CdkAppConfig` and `parseConfig`
   - File: `cdk/lib/config.ts`
   - Pure function `parseConfig(env: NodeJS.ProcessEnv): CdkAppConfig`. Fields and defaults exactly per design §2 table (camelCase: `sesDomain`, `awsRegion`, `awsAccountId`, `hostedZoneName`, `stackName`, `sesConfigurationSet`, `snsTopicName`, `sqsQueueName`, `iamUserName`, `credentialsSecretName`, `accessKeySerial`, `sqsRetentionDays`, `sqsVisibilityTimeoutSeconds`, `dlqMaxReceiveCount`, `sesMailFromSubdomain`).
   - Collect **all** validation errors and throw one `Error` listing them (design §2). Validation rules verbatim from design §2: domain shape; hosted-zone containment (`sesDomain === hostedZoneName || sesDomain.endsWith('.' + hostedZoneName)`); integer ranges (`SQS_RETENTION_DAYS` 1–14, `SQS_VISIBILITY_TIMEOUT_SECONDS` 0–43200, `DLQ_MAX_RECEIVE_COUNT` ≥ 0, `ACCESS_KEY_SERIAL` ≥ 1).
   - **No account requirement in `parseConfig`** — account resolution is enforced in `bin/cdk-app.ts` (task 1.2) because `CDK_DEFAULT_ACCOUNT` exists only under the CDK CLI and `generate-proxy-env.ts` (Phase 5) reuses `parseConfig` (design §2).
   - **Name derivation** (design §2): validate `STACK_NAME` against `/^[A-Za-z][A-Za-z0-9-]*$/` and ≤ 50 chars; compute `namePrefix = kebabCase(stackName)` (split on case boundaries, lowercase, join with `-`: `GhostSesProxy` → `ghost-ses-proxy`). Defaults: `sesConfigurationSet` and `iamUserName` = `<prefix>`; `snsTopicName` and `sqsQueueName` = `<prefix>-events`; `credentialsSecretName` = `<prefix>/credentials`. Explicit env vars override the derived defaults.
 
-- [ ] **1.2** Wire `parseConfig` into the app entry
+- [x] **1.2** Wire `parseConfig` into the app entry
   - File: `cdk/bin/cdk-app.ts`
   - Replace the Phase 0 ad-hoc env reads: `dotenv.config()` → `const config = parseConfig(process.env)` → `new GhostSesProxyStack(app, config.stackName, { config, env: { account: config.awsAccountId ?? process.env.CDK_DEFAULT_ACCOUNT, region: config.awsRegion } })`. Stack props type moves to `{ config: CdkAppConfig } & StackProps`.
   - When `config.hostedZoneName` is set and the resolved account is undefined, exit with an actionable error ("Route53 lookup needs an account: set AWS_ACCOUNT_ID in cdk/.env or configure AWS credentials"). This check lives here, **not** in `parseConfig` (design §2).
 
-- [ ] **1.3** Unit tests for `parseConfig`
+- [x] **1.3** Unit tests for `parseConfig`
   - File: `cdk/test/config.test.ts`
   - Cases from design Test Plan: minimal env → all defaults; every var set → reflected; missing `SES_DOMAIN` throws naming it; multiple invalid vars → single error listing all; hosted-zone containment (outside → throw; equal and subdomain → pass); hosted zone set with no `AWS_ACCOUNT_ID`/`CDK_DEFAULT_ACCOUNT` → parses successfully (guards `generate-env` for Route53 users, design §2); numeric edges (non-numeric, negative, `SQS_RETENTION_DAYS=15` throw; `DLQ_MAX_RECEIVE_COUNT=0` valid); name derivation (default stack → `ghost-ses-proxy` / `ghost-ses-proxy-events` / `ghost-ses-proxy/credentials`; `STACK_NAME=MyBlog` → `my-blog`-based names; explicit `*_NAME` vars override; invalid stack name — bad chars or > 50 chars — throws).
   - Use plain object env fixtures — never mutate `process.env`.
 
-- [ ] **1.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **1.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (1 file, 34 tests passing), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with no AWS credentials. Also verified the failure path: `npx cdk synth` with no `SES_DOMAIN` exits 1 printing the aggregated config error.
+
+**Implementation notes / decisions:**
+- **`optional()` helper trims and treats `''` as unset.** An empty or whitespace-only env var (common when a user leaves `SES_DOMAIN=` in `.env`) is treated as missing rather than as an invalid value, so the error message is the "required" one. All string values are stored trimmed.
+- **Error aggregation shape:** one `Error` whose message is `Invalid CDK configuration (see cdk/.env.example):` followed by one `  - <detail>` line per problem. Every detail line starts with the offending variable name, so tests match on `/VAR_NAME/`.
+- **Ordering:** validation errors are collected in declaration order (`SES_DOMAIN` → hosted zone → `STACK_NAME` → numerics) and thrown before the config object is built, so a bad `STACK_NAME` never produces garbage derived names. When `STACK_NAME` is invalid the derivation falls back to the default prefix internally, but that value is unreachable because the throw happens first.
+- **`kebabCase` is exported** from `lib/config.ts` (handles acronym runs, e.g. `MyAWSBlog` → `my-aws-blog`, plus already-hyphenated/underscored/spaced input) — Phase 6 docs or later phases may reuse it.
+- **`ACCESS_KEY_SERIAL` upper bound** is `Number.MAX_SAFE_INTEGER` (design only specifies ≥ 1); same for `DLQ_MAX_RECEIVE_COUNT` (≥ 0). `parseInteger` rejects non-integers via `/^-?\d+$/`, so `1.5` is rejected rather than silently truncated by `parseInt`.
+- **`SES_DOMAIN` shape** is checked with a full label regex (`example` with no dot is rejected; scheme/slash/`@` all fail it). `HOSTED_ZONE_NAME` gets no shape validation — only the containment rule from design §2 — to stay faithful to the spec.
+- **`bin/cdk-app.ts`** wraps `parseConfig` in a `loadConfig()` helper so `process.exit(1)` (typed `never`) narrows the return type; the account check for `hostedZoneName` lives here per design §2, never in `parseConfig`.
+- **Stack props now use `CdkAppConfig`** — the Phase 0 placeholder `GhostSesProxyStackConfig` interface was deleted from `lib/ghost-ses-proxy-stack.ts` and replaced with a type-only import from `./config.js`.
+
+**For later phases:** `parseConfig` never requires an account, so Phase 5's `generate-proxy-env.ts` can call it directly (guarded by the test "parses with a hosted zone and no account"). Phase 2's `makeTemplate` helper should build env fixtures as plain objects and pass them straight to `parseConfig` — tests never touch `process.env`.
+
+**Files added:** `cdk/lib/config.ts`, `cdk/test/config.test.ts`. **Modified:** `cdk/bin/cdk-app.ts`, `cdk/lib/ghost-ses-proxy-stack.ts`.
 
 ---
 

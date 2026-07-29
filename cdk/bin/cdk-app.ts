@@ -1,22 +1,30 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import { App } from 'aws-cdk-lib';
+import { parseConfig, type CdkAppConfig } from '../lib/config.js';
 import { GhostSesProxyStack } from '../lib/ghost-ses-proxy-stack.js';
 
-const sesDomain = process.env.SES_DOMAIN;
-if (!sesDomain) {
-  console.error('SES_DOMAIN is required. Set it in cdk/.env (see cdk/.env.example).');
+function loadConfig(): CdkAppConfig {
+  try {
+    return parseConfig(process.env);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
+const config = loadConfig();
+const account = config.awsAccountId ?? process.env.CDK_DEFAULT_ACCOUNT;
+
+if (config.hostedZoneName && !account) {
+  console.error(
+    'Route53 lookup needs an account: set AWS_ACCOUNT_ID in cdk/.env or configure AWS credentials.',
+  );
   process.exit(1);
 }
 
-const awsRegion = process.env.AWS_REGION ?? 'us-east-1';
-const stackName = process.env.STACK_NAME ?? 'GhostSesProxy';
-
 const app = new App();
-new GhostSesProxyStack(app, stackName, {
-  config: { sesDomain, awsRegion, stackName },
-  env: {
-    account: process.env.AWS_ACCOUNT_ID ?? process.env.CDK_DEFAULT_ACCOUNT,
-    region: awsRegion,
-  },
+new GhostSesProxyStack(app, config.stackName, {
+  config,
+  env: { account, region: config.awsRegion },
 });
