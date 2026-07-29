@@ -1,3 +1,5 @@
 node_modules/
 data/
 .env
+cdk/cdk.out/
+cdk/cdk.context.json
