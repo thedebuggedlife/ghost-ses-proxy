@@ -5,16 +5,38 @@ import { parseConfig } from '../lib/config.js';
 import { GhostSesProxyStack } from '../lib/ghost-ses-proxy-stack.js';
 
 const BASE_ENV: Record<string, string> = { SES_DOMAIN: 'example.com' };
+const LOOKUP_ACCOUNT = '123456789012';
 
-export function makeTemplate(envOverrides: Record<string, string> = {}): Template {
-  const config = parseConfig({ ...BASE_ENV, ...envOverrides });
-  const app = new App();
+export interface MakeTemplateOptions {
+  /** Pre-seed the app context with a Route53 hosted-zone lookup result. */
+  readonly hostedZoneLookup?: boolean;
+}
+
+export function makeTemplate(
+  envOverrides: Record<string, string> = {},
+  options: MakeTemplateOptions = {},
+): Template {
+  const env = { ...BASE_ENV, ...envOverrides };
+  if (options.hostedZoneLookup) env.AWS_ACCOUNT_ID ??= LOOKUP_ACCOUNT;
+
+  const config = parseConfig(env);
+  const context = options.hostedZoneLookup
+    ? {
+        [`hosted-zone:account=${config.awsAccountId}:domainName=${config.hostedZoneName}:region=${config.awsRegion}`]:
+          { Id: '/hostedzone/Z123', Name: `${config.hostedZoneName}.` },
+      }
+    : undefined;
+
+  const app = new App({ context });
   const stack = new GhostSesProxyStack(app, config.stackName, {
     config,
     env: { account: config.awsAccountId, region: config.awsRegion },
   });
   return Template.fromStack(stack);
 }
+
+const ZONE_ENV: Record<string, string> = { HOSTED_ZONE_NAME: 'example.com' };
+const WITH_ZONE: MakeTemplateOptions = { hostedZoneLookup: true };
 
 describe('messaging resources', () => {
   it('creates the SNS topic with the derived name', () => {
@@ -120,5 +142,205 @@ describe('messaging resources', () => {
 
   it('outputs the queue URL', () => {
     makeTemplate().hasOutput('SqsQueueUrl', {});
+  });
+});
+
+describe('SES configuration set', () => {
+  it('creates the configuration set with the derived name', () => {
+    makeTemplate().hasResourceProperties('AWS::SES::ConfigurationSet', {
+      Name: 'ghost-ses-proxy',
+    });
+  });
+
+  it('uses an explicit configuration set name when configured', () => {
+    makeTemplate({ SES_CONFIGURATION_SET: 'custom-set' }).hasResourceProperties(
+      'AWS::SES::ConfigurationSet',
+      { Name: 'custom-set' },
+    );
+  });
+
+  it('publishes exactly the seven event types to the SNS topic', () => {
+    const template = makeTemplate();
+    const topicLogicalId = Object.keys(template.findResources('AWS::SNS::Topic'))[0];
+
+    template.resourceCountIs('AWS::SES::ConfigurationSetEventDestination', 1);
+    template.hasResourceProperties('AWS::SES::ConfigurationSetEventDestination', {
+      EventDestination: {
+        Enabled: true,
+        MatchingEventTypes: Match.exact([
+          'send',
+          'delivery',
+          'open',
+          'click',
+          'bounce',
+          'complaint',
+          'reject',
+        ]),
+        SnsDestination: { TopicARN: { Ref: topicLogicalId } },
+      },
+    });
+  });
+});
+
+describe('SES email identity', () => {
+  it('verifies the sending domain and attaches the configuration set', () => {
+    const template = makeTemplate();
+    const configSetLogicalId = Object.keys(
+      template.findResources('AWS::SES::ConfigurationSet'),
+    )[0];
+
+    template.hasResourceProperties('AWS::SES::EmailIdentity', {
+      EmailIdentity: 'example.com',
+      ConfigurationSetAttributes: { ConfigurationSetName: { Ref: configSetLogicalId } },
+      MailFromAttributes: Match.absent(),
+    });
+  });
+
+  it('keeps DKIM signing on by default (no DkimAttributes override)', () => {
+    makeTemplate().hasResourceProperties('AWS::SES::EmailIdentity', {
+      DkimAttributes: Match.absent(),
+    });
+  });
+
+  it('sets the MAIL FROM domain when a subdomain is configured', () => {
+    makeTemplate({ SES_MAIL_FROM_SUBDOMAIN: 'bounce' }).hasResourceProperties(
+      'AWS::SES::EmailIdentity',
+      { MailFromAttributes: { MailFromDomain: 'bounce.example.com' } },
+    );
+  });
+});
+
+describe('DNS without a hosted zone', () => {
+  it('creates no Route53 records', () => {
+    makeTemplate({ SES_MAIL_FROM_SUBDOMAIN: 'bounce' }).resourceCountIs(
+      'AWS::Route53::RecordSet',
+      0,
+    );
+  });
+
+  it('outputs the six DKIM CNAME name/value pairs', () => {
+    const template = makeTemplate();
+    const identityLogicalId = Object.keys(template.findResources('AWS::SES::EmailIdentity'))[0];
+
+    for (const index of [1, 2, 3]) {
+      template.hasOutput(`DkimCnameName${index}`, {
+        Value: { 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenName${index}`] },
+      });
+      template.hasOutput(`DkimCnameValue${index}`, {
+        Value: { 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenValue${index}`] },
+      });
+    }
+  });
+
+  it('omits the MAIL FROM outputs when no MAIL FROM subdomain is configured', () => {
+    const outputs = makeTemplate().toJSON().Outputs ?? {};
+    expect(outputs.MailFromMxRecord).toBeUndefined();
+    expect(outputs.MailFromSpfRecord).toBeUndefined();
+  });
+
+  it('outputs the MAIL FROM MX and SPF records to add manually', () => {
+    const template = makeTemplate({ SES_MAIL_FROM_SUBDOMAIN: 'bounce' });
+
+    template.hasOutput('MailFromMxRecord', {
+      Value: 'bounce.example.com MX 10 feedback-smtp.us-east-1.amazonses.com',
+    });
+    template.hasOutput('MailFromSpfRecord', {
+      Value: 'bounce.example.com TXT "v=spf1 include:amazonses.com ~all"',
+    });
+  });
+});
+
+describe('DNS with a hosted zone', () => {
+  it('drops the manual DNS outputs entirely', () => {
+    const outputs =
+      makeTemplate({ ...ZONE_ENV, SES_MAIL_FROM_SUBDOMAIN: 'bounce' }, WITH_ZONE).toJSON()
+        .Outputs ?? {};
+
+    for (const key of Object.keys(outputs)) {
+      expect(key).not.toMatch(/^(DkimCname|MailFrom)/);
+    }
+    expect(Object.keys(outputs).sort()).toEqual([
+      'AwsRegion',
+      'SendingDomain',
+      'SesConfigurationSet',
+      'SqsQueueUrl',
+    ]);
+  });
+
+  it('verifies the zone apex and lets the construct create the DKIM records', () => {
+    const template = makeTemplate(ZONE_ENV, WITH_ZONE);
+    const identityLogicalId = Object.keys(template.findResources('AWS::SES::EmailIdentity'))[0];
+
+    template.hasResourceProperties('AWS::SES::EmailIdentity', { EmailIdentity: 'example.com' });
+    template.resourceCountIs('AWS::Route53::RecordSet', 3);
+
+    for (const index of [1, 2, 3]) {
+      template.hasResourceProperties('AWS::Route53::RecordSet', {
+        HostedZoneId: 'Z123',
+        Type: 'CNAME',
+        Name: { 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenName${index}`] },
+        ResourceRecords: [{ 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenValue${index}`] }],
+      });
+    }
+  });
+
+  it('creates the DKIM records itself when the identity is a subdomain of the zone', () => {
+    const template = makeTemplate({ ...ZONE_ENV, SES_DOMAIN: 'mail.example.com' }, WITH_ZONE);
+    const identityLogicalId = Object.keys(template.findResources('AWS::SES::EmailIdentity'))[0];
+
+    template.hasResourceProperties('AWS::SES::EmailIdentity', {
+      EmailIdentity: 'mail.example.com',
+    });
+    template.resourceCountIs('AWS::Route53::RecordSet', 3);
+
+    for (const index of [1, 2, 3]) {
+      template.hasResourceProperties('AWS::Route53::RecordSet', {
+        HostedZoneId: 'Z123',
+        Type: 'CNAME',
+        Name: { 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenName${index}`] },
+        ResourceRecords: [{ 'Fn::GetAtt': [identityLogicalId, `DkimDNSTokenValue${index}`] }],
+      });
+    }
+  });
+
+  it.each([
+    ['apex', 'example.com', 'bounce.example.com.'],
+    ['subdomain', 'mail.example.com', 'bounce.mail.example.com.'],
+  ])('creates the MAIL FROM MX and TXT records (%s identity)', (_case, sesDomain, recordName) => {
+    const template = makeTemplate(
+      { ...ZONE_ENV, SES_DOMAIN: sesDomain, SES_MAIL_FROM_SUBDOMAIN: 'bounce' },
+      WITH_ZONE,
+    );
+
+    template.resourceCountIs('AWS::Route53::RecordSet', 5);
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      HostedZoneId: 'Z123',
+      Type: 'MX',
+      Name: recordName,
+      ResourceRecords: ['10 feedback-smtp.us-east-1.amazonses.com'],
+    });
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      HostedZoneId: 'Z123',
+      Type: 'TXT',
+      Name: recordName,
+      ResourceRecords: ['"v=spf1 include:amazonses.com ~all"'],
+    });
+  });
+});
+
+describe('always-present outputs', () => {
+  it('exposes the configuration set, sending domain and region', () => {
+    const template = makeTemplate();
+    const configSetLogicalId = Object.keys(
+      template.findResources('AWS::SES::ConfigurationSet'),
+    )[0];
+
+    template.hasOutput('SesConfigurationSet', { Value: { Ref: configSetLogicalId } });
+    template.hasOutput('SendingDomain', { Value: 'example.com' });
+    template.hasOutput('AwsRegion', { Value: 'us-east-1' });
+  });
+
+  it('reflects a non-default region', () => {
+    makeTemplate({ AWS_REGION: 'eu-west-1' }).hasOutput('AwsRegion', { Value: 'eu-west-1' });
   });
 });

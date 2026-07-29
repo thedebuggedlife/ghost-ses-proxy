@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 3 (Phase 2 complete)
+> **Current phase:** Phase 4 (Phase 3 complete)
 
 ---
 
@@ -186,34 +186,59 @@ Build a self-contained AWS CDK TypeScript package under `cdk/` that provisions a
 
 ### Tasks
 
-- [ ] **3.1** Verify CDK API surface against installed typings (record in Observations)
+- [x] **3.1** Verify CDK API surface against installed typings (record in Observations)
   - Files to inspect: `cdk/node_modules/aws-cdk-lib/aws-ses/lib/*.d.ts`
   - Confirm exact names/signatures for: `ses.ConfigurationSet`, `configurationSet.addEventDestination` + `ses.EventDestination.snsTopic(topic)`, `ses.EmailSendingEvent` enum members (SEND, DELIVERY, OPEN, CLICK, BOUNCE, COMPLAINT, REJECT), `ses.EmailIdentity` props (`identity`, `configurationSet`, `mailFromDomain`), `ses.Identity.domain` / `Identity.publicHostedZone`, and the DKIM token attributes (`dkimDnsTokenName1..3`, `dkimDnsTokenValue1..3`), `emailIdentityArn`, `configurationSetArn`. Also check whether `Identity.publicHostedZone` handles a subdomain identity (design §3 "Route53 identity edge case"), and whether `EmailIdentity` auto-creates the MAIL FROM MX/TXT records when a hosted-zone identity is used (design §3 MAIL FROM note). Record findings — deviations from the design sketch are fine; note them.
 
-- [ ] **3.2** Add configuration set + SNS event destination
+- [x] **3.2** Add configuration set + SNS event destination
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - Per design §3: `ses.ConfigurationSet` named `config.sesConfigurationSet`; event destination publishing the exact 7 event types to the Phase 2 topic. Event types are hardcoded — not configurable (design §3 decision).
 
-- [ ] **3.3** Add email identity with Route53/manual branch
+- [x] **3.3** Add email identity with Route53/manual branch
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - Per design §3: when `config.hostedZoneName` set → `route53.HostedZone.fromLookup`; identity via `Identity.publicHostedZone(zone)` when `sesDomain === hostedZoneName`, else `Identity.domain(sesDomain)` + three explicit `route53.CnameRecord`s from the DKIM token attributes (subdomain case). No hosted zone → `Identity.domain` only. Attach `configurationSet` as the identity default; set `mailFromDomain` when `sesMailFromSubdomain` configured.
   - When a hosted zone is used and `sesMailFromSubdomain` is set, ensure the MAIL FROM MX/TXT records exist in the zone: rely on the construct where task 3.1 confirmed auto-creation, otherwise add explicit `route53.MxRecord` (`10 feedback-smtp.<region>.amazonses.com`) and `route53.TxtRecord` (`"v=spf1 include:amazonses.com ~all"`) for the MAIL FROM domain (design §3).
 
-- [ ] **3.4** Add conditional DNS outputs
+- [x] **3.4** Add conditional DNS outputs
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - Per design §4: no hosted zone → `DkimCnameName1..3`/`DkimCnameValue1..3` outputs; additionally when MAIL FROM configured → `MailFromMxRecord` (`10 feedback-smtp.<region>.amazonses.com`) and `MailFromSpfRecord` (`"v=spf1 include:amazonses.com ~all"`). With a hosted zone: none of these outputs.
   - Also add the always-present outputs `SesConfigurationSet`, `SendingDomain`, `AwsRegion` (design §4); `CredentialsSecretArn` comes in Phase 4.
 
-- [ ] **3.5** SES + DNS tests
+- [x] **3.5** SES + DNS tests
   - File: `cdk/test/stack.test.ts`
   - Extend `makeTemplate` to support Route53 cases: accept an optional flag that pre-seeds `new App({ context })` with key `hosted-zone:account=123456789012:domainName=example.com:region=us-east-1` → `{ Id: '/hostedzone/Z123', Name: 'example.com.' }` and sets `AWS_ACCOUNT_ID=123456789012` (design Test Plan).
   - Assertions: config set name; event destination targets the topic with exactly the 7 types; EmailIdentity with DKIM, attached config set name, `MailFromDomain` when configured; no zone → six DKIM outputs (plus MAIL FROM outputs when configured); zone+apex → no DKIM outputs and no explicit RecordSets beyond what the construct emits (assert DKIM outputs absent); zone+subdomain (`SES_DOMAIN=mail.example.com`) → three `AWS::Route53::RecordSet` CNAMEs present; zone+subdomain+`SES_MAIL_FROM_SUBDOMAIN` → MX and TXT RecordSets for the MAIL FROM domain present (construct- or explicitly-created).
 
-- [ ] **3.6** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **3.6** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (2 files, 60 tests — 34 config + 26 stack), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with AWS credential env vars explicitly unset.
+
+**Task 3.1 — API surface verified against `aws-cdk-lib` 2.262.1:**
+
+Confirmed as designed:
+- `ses.ConfigurationSet(scope, id, { configurationSetName })` → `AWS::SES::ConfigurationSet` with `Name`; exposes `configurationSetName` and `addEventDestination(id, { destination, events })`.
+- `ses.EventDestination.snsTopic(topic)`; `ses.EmailSendingEvent` has all seven members — values are camelCase strings (`send`, `delivery`, `open`, `click`, `bounce`, `complaint`, `reject`).
+- `ses.EmailIdentity` props `identity` / `configurationSet` / `mailFromDomain`; attributes `emailIdentityArn`, `dkimDnsTokenName1..3`, `dkimDnsTokenValue1..3`, plus a convenience `dkimRecords: { name, value }[]` (used instead of the six individual getters).
+- `ses.Identity.domain(d)` and `ses.Identity.publicHostedZone(zone)` exist. `HostedZone.fromLookup` returns `IHostedZone`, and `IPublicHostedZone extends IHostedZone {}` is an *empty* extension, so it is structurally assignable — **no cast needed**.
+
+**Deviations from the design sketch (all confirmed by reading the construct source):**
+1. **`configurationSet.configurationSetArn` does NOT exist** in 2.262.1. `ConfigurationSet` only exposes `configurationSetName` (and `configurationSetRef`). **Phase 4 must build the ARN itself**, e.g. `this.formatArn({ service: 'ses', resource: 'configuration-set', resourceName: this.configurationSet.configurationSetName })`. The design §3 sketch's `configurationSet.configurationSetArn` will not compile.
+2. **`Identity.publicHostedZone(zone)` uses `zone.zoneName` as the identity value** (`{ value: hostedZone.zoneName, hostedZone }`), so it genuinely cannot express a subdomain identity — the design's subdomain branch is required, not optional.
+3. **`route53.CnameRecord` cannot be used for the DKIM records.** `determineFullyQualifiedDomainName` is **not** token-aware: it sees the unresolved `dkimDnsTokenName1` token, finds it does not end with the zone suffix, and appends `.example.com.` — producing a double-suffixed record name. The plan said `CnameRecord`; the implementation uses `route53.CfnRecordSet` (`type: 'CNAME'`, `ttl: '1800'`) instead, which is exactly what `aws-cdk-lib`'s own `EasyDkim.bind()` does. One inline comment records this.
+4. **MAIL FROM auto-creation is conditional on `props.identity.hostedZone`.** `EmailIdentity` creates `MailFromMxRecord`/`MailFromTxtRecord` only when `mailFromDomain` is set *and* the identity carries a hosted zone — i.e. the apex branch only. The subdomain branch therefore creates them explicitly (`route53.MxRecord` / `route53.TxtRecord`); those take a concrete record name, so the FQDN helper handles them correctly. Verified in synth: both branches emit MX `10 feedback-smtp.<region>.amazonses.com` and TXT `"v=spf1 include:amazonses.com ~all"` at `bounce.<domain>.`.
+
+**Implementation notes:**
+- Branch selector is `apexZone = hostedZone && cfg.sesDomain === cfg.hostedZoneName ? hostedZone : undefined` — this both selects the identity flavour and narrows the type without a non-null assertion.
+- Stack now also exposes `public readonly configurationSet` and `emailIdentity` for Phase 4.
+- `AwsRegion` output uses `this.region` (concrete because `bin/cdk-app.ts` and the test helper both pass `env.region`). `MailFrom*` output values and the MX host are built from `this.region` too, so they stay correct for non-default regions.
+- The MAIL FROM outputs are human-readable one-liners (`bounce.example.com MX 10 feedback-smtp.us-east-1.amazonses.com`, `bounce.example.com TXT "v=spf1 include:amazonses.com ~all"`) rather than bare values — they are a DNS to-do list, per design §4.
+- Adding the event destination also makes CDK emit an `AWS::SNS::TopicPolicy` (`EventsTopicPolicy…`) granting `ses.amazonaws.com` publish rights; the event destination `DependsOn` it. Nothing to do, but it changes SNS resource counts if a later phase asserts on them.
+
+**Test helper change (Phase 4 must use it):** `makeTemplate(envOverrides?, options?)` gained a second parameter `{ hostedZoneLookup?: boolean }`. When true it defaults `AWS_ACCOUNT_ID` to `123456789012` and seeds `new App({ context })` with `hosted-zone:account=<acct>:domainName=<zone>:region=<region>` → `{ Id: '/hostedzone/Z123', Name: '<zone>.' }`. Module-level `ZONE_ENV` / `WITH_ZONE` constants wrap the common case.
+
+**Files modified:** `cdk/lib/ghost-ses-proxy-stack.ts`, `cdk/test/stack.test.ts`.
 
 ---
 
