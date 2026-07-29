@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 13 complete
-> **Current phase:** Phase 14
+> **Status:** In progress — Phase 14 complete
+> **Current phase:** Phase 15
 
 ---
 
@@ -1145,7 +1145,7 @@ This phase deliberately carries one source file so there is context room to debu
 
 ### Tasks
 
-- [ ] **14.1** Implement the poller class
+- [x] **14.1** Implement the poller class
   - File: `src/sqs-poller.ts`
   - `class SqsPoller` with `pollOnce(): Promise<void>`, `start(): void`, `stop(): void`, constructed from `(deps, client?: SQSClient)` so tests can inject a mocked client. `stop()` sets a flag the loop checks and clears any pending backoff timer, so `index.ts` can shut down cleanly and tests do not leak timers.
   - Preserve the parsing behavior of `lib/sqs-poller.js`: SNS envelope (`{ Type: 'Notification', Message }`) unwrapping, raw SES events, `null` for anything unrecognized, and **delete the message** for invalid JSON, unrecognized shape, and successful processing alike, so a poison message cannot block the queue.
@@ -1166,16 +1166,43 @@ This phase deliberately carries one source file so there is context room to debu
   - Logs use `component: 'sqs'` with `ghostEmailId`, `recipient`, `sesMessageId`, `eventType`, `sesEventType`.
   - Keep the 5-second backoff on a poll error and keep the loop alive — a poll failure must never exit the loop.
 
-- [ ] **14.2** Test the poller
+- [x] **14.2** Test the poller
   - File: `test/sqs-poller.test.ts`
   - `aws-sdk-client-mock` + `:memory:`, driving `pollOnce()` directly rather than `start()`. Per design Test Plan: processes an SNS-enveloped event and a raw SES event; stores normalized rows; deletes the message; **a redelivered identical message inserts no second row** (D3 regression — the fixture must carry an explicit timestamp, per design §5.3's known limitation); invalid JSON increments `sqs_parse_errors_total{reason="invalid_json"}` and the message is still deleted; an unrecognized shape increments `unrecognized_format` and is still deleted; **a `Delivery` payload with no `delivery` block increments `sqs_parse_errors_total{reason="malformed_payload"}`, is deleted, stores no rows, and does not increment `events_skipped_total`** (D7 regression — today it throws and the message is never deleted); `sqs_last_poll_timestamp_seconds` advances on success; a poll error increments `sqs_polls_total{outcome="error"}`, backs off, and does not exit the loop; correlation records `matched` when a `recipient_emails` row exists, `unmatched` when it does not, and `unmatched` when the event carries no `ses_message_id`; a `delivered` event records `severity="none"`; a `Send`/`DeliveryDelay` event increments `events_skipped_total`; `stop()` halts the loop and leaves no pending timer.
   - Use fake timers for the backoff and `start()`/`stop()` assertions.
 
-- [ ] **14.3** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **14.3** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All three tasks done; the gate is green — `typecheck` clean, `build` emits `dist/sqs-poller.js` (still no `dist/src/`), `test:coverage` runs **469 tests across 20 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/sqs-poller.ts`, `test/sqs-poller.test.ts` (55 tests). **Modified:** `src/event-mapper.ts` (see Deviation 1).
+
+**Deviation 1 — `EVENT_MAP` is now a `Map`, and `event-mapper.ts` exports two type predicates.** The poller has to decide whether an empty `mapSesEvent` result means "malformed payload" (D7) or "unrecognized type" (skip), so it needs the same notion of *recognized* the mapper uses. Duplicating the type list in `sqs-poller.ts` would let the two drift, so `isRecognizedSesEventType` and `isSkippedSesEventType` are exported from `event-mapper.ts` instead. While adding the first, the object-literal `EVENT_MAP` became a `Map`: `eventType` comes from third-party JSON and `EVENT_MAP['toString']` on a `Record` returns `Object.prototype.toString` — a truthy "mapping" whose `.event` is `undefined`, which would produce a row with a null `event_type` and hit the `NOT NULL` constraint, i.e. exactly the D7 poison-message class the phase exists to remove. A `Map` has no prototype keys, so both the mapper and the predicate agree for every possible input. No captured fixture changes (the `unknown-type` fixture is `Subscription`).
+
+**Deviation 2 — the loop is timer-driven, never `.then`-recursive.** `lib/sqs-poller.js`'s `loop()` re-invokes itself from a `.then()` callback; that is precisely the unbounded-microtask-recursion hazard Phase 0 recorded as Design Decision P2. `scheduleNext(delayMs)` always goes through `setTimeout` — `0` after a successful poll, `POLL_ERROR_BACKOFF_MS` (5000) after a failure — so `stop()` has exactly one handle to clear and `vi.getTimerCount()` is a real assertion that nothing leaked. With a 20-second long poll the extra 0 ms hop is free.
+
+**Deviation 3 — `pollOnce()` rejects on a receive failure rather than swallowing it.** The metric (`sqs_polls_total{outcome="error"}`), the duration observation, and the `error` log all happen inside `pollOnce`'s catch before the re-throw; `runIteration` catches and backs off. This keeps the plan's `pollOnce(): Promise<void>` signature while letting tests assert both halves (`rejects.toThrow` + the counter) without driving `start()`.
+
+**Deviation 4 — a failing `DeleteMessageCommand` is counted, logged, and swallowed.** Legacy let it reject the whole chain. `sqs_messages_deleted_total{outcome="error"}` only ever has a value if the failure is caught, and one expired receipt handle should not abort the remaining messages in the batch. The message returns on visibility timeout and is re-processed — which is now harmless, because D3 makes the insert idempotent. A failing **database** statement still propagates and leaves the message queued (tested), which is the correct retry case.
+
+**Deviation 5 — an SNS envelope whose `Message` is not an SES event is `unrecognized_format`, not a silent skip.** Legacy returned the unwrapped payload unconditionally and let `mapSesEvent` return `[]`. `parseSqsBody` now returns `ParsedSesEvent | null` and requires a string `eventType` on both the raw and the unwrapped path, so the garbage case lands on the same counter as `{"foo":"bar"}`. Both still delete the message; only the metric label differs. `ParsedSesEvent = SesEvent & { eventType: string }` also removes what would otherwise be an unreachable `?? ''` branch in `processMessage`.
+
+**D7 branch selection is the crux of this phase.** Order in `processMessage` is load-bearing: skip types are checked *before* `mapSesEvent`, so `Send`/`DeliveryDelay` can never be mistaken for malformed input; then an empty result splits on `isRecognizedSesEventType` — recognized ⇒ `sqs_parse_errors_total{reason="malformed_payload"}` + `warn{sesEventType, sesMessageId}`, unrecognized ⇒ `events_skipped_total{ses_event_type="other"}`. Every case in `intent/d7-malformed-payload.json` is driven directly, including the three `mapSesEventReturnsEmpty` payloads (via `it.each` over the fixture) and the `contrastWithTheSkipPath` cases, and each asserts the *other* counter is absent.
+
+**D3 is asserted against the intent fixture's literal hash.** `test/sqs-poller.test.ts` imports `intent/d3-redelivery-dedupe.json`, drives its `sesEvent` through two `pollOnce()` calls off the same queued message, and asserts one row whose id is `48331fd09573841d97dc2c60a1081f22`, two `DeleteMessageCommand` calls, and two successful polls. `eventId` is exported and separately tested for sensitivity to recipient and `ses_message_id`. Phase 15 can reuse both.
+
+**Metric/label decisions made here (all inside P10).** `severity: null` → `severity="none"`; an event with no `ses_message_id` skips the lookup entirely but still increments `event_correlation_total{result="unmatched"}`; `event_lag_seconds` observes `Math.max(0, now − timestamp)` so a clock-skewed future timestamp cannot push a negative sample into the histogram. `sqs_messages_received_total` is incremented by the batch size, not once per poll.
+
+**A label-less counter/gauge reads as `0`, not absent.** `sqs_messages_received_total` and `sqs_last_poll_timestamp_seconds` have no labels, so prom-client materializes them at 0 immediately — `toBeUndefined()` is the wrong assertion for them (it is the right one for a labelled series that has never been incremented). Phase 15 will hit this too.
+
+**`vi.advanceTimersToNextTimerAsync()` can run more than one iteration.** After a successful poll the next timer is scheduled at delay 0, i.e. at the current fake-clock time, and sinon fires timers created during the microtask flush at that same timestamp. The loop tests therefore assert *monotonic growth* and `vi.getTimerCount()` rather than exact call counts; the backoff test is exact because a 5000 ms timer is not due at the current instant.
+
+**Notes for Phase 15.**
+- `parseSqsBody`, `eventId`, `POLL_ERROR_BACKOFF_MS`, and `ParsedSesEvent` are exported from `src/sqs-poller.ts`; the contract test can import `eventId` rather than re-deriving the hash.
+- `test/helpers/fixtures.ts`'s `withoutEventBlock`, `snsEnvelope`, `rawSqsBody`, and `snsSqsBody` were written in Phase 7/9 for this phase and are all now exercised — Phase 15's D7 contract assertion can use them unchanged.
+- Nothing constructs an `SqsPoller` yet; `src/index.ts` (Phase 16) is the first caller. `stop()` clears the timer but does **not** destroy the injected `SQSClient` — if Phase 16's shutdown needs the socket closed to let the process exit, add the `client.destroy()` there or extend `stop()` then (and update the start/stop tests, which reuse one poller per test).
 
 ---
 

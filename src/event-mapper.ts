@@ -12,18 +12,28 @@ interface EventMapping {
   message: string | null;
 }
 
-const EVENT_MAP: Record<string, EventMapping> = {
-  Delivery: { event: 'delivered', severity: null, code: 250, message: 'OK' },
-  Open: { event: 'opened', severity: null, code: null, message: null },
-  Click: { event: 'clicked', severity: null, code: null, message: null },
-  Complaint: { event: 'complained', severity: null, code: null, message: null },
-  Reject: {
-    event: 'failed',
-    severity: 'permanent',
-    code: 607,
-    message: 'Not delivering to previously bounced address',
-  },
-};
+/** A Map, not an object literal: `eventType` comes from third-party JSON and `'toString' in {}` is true. */
+const EVENT_MAP: ReadonlyMap<string, EventMapping> = new Map([
+  [
+    'Delivery',
+    { event: 'delivered', severity: null, code: 250, message: 'OK' },
+  ],
+  ['Open', { event: 'opened', severity: null, code: null, message: null }],
+  ['Click', { event: 'clicked', severity: null, code: null, message: null }],
+  [
+    'Complaint',
+    { event: 'complained', severity: null, code: null, message: null },
+  ],
+  [
+    'Reject',
+    {
+      event: 'failed',
+      severity: 'permanent',
+      code: 607,
+      message: 'Not delivering to previously bounced address',
+    },
+  ],
+]);
 
 const PERMANENT_BOUNCE: EventMapping = {
   event: 'failed',
@@ -41,6 +51,15 @@ const TRANSIENT_BOUNCE: EventMapping = {
 
 /** Types with no Mailgun equivalent — intentionally skipped. */
 const SKIP_TYPES: ReadonlySet<string> = new Set(['Send', 'DeliveryDelay']);
+
+export function isSkippedSesEventType(eventType: string): boolean {
+  return SKIP_TYPES.has(eventType);
+}
+
+/** True when `mapSesEvent` knows the type, so an empty result means a malformed payload (D7). */
+export function isRecognizedSesEventType(eventType: string): boolean {
+  return eventType === 'Bounce' || EVENT_MAP.has(eventType);
+}
 
 function emailAddresses(
   recipients: readonly { emailAddress?: string }[] | undefined,
@@ -160,7 +179,7 @@ export function mapSesEvent(
       ? sesEvent.bounce?.bounceType === 'Permanent'
         ? PERMANENT_BOUNCE
         : TRANSIENT_BOUNCE
-      : EVENT_MAP[eventType];
+      : EVENT_MAP.get(eventType);
 
   if (!mapping) return [];
 
