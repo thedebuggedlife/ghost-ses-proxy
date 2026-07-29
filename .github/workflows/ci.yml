@@ -8,6 +8,22 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run test:coverage
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -23,10 +39,9 @@ jobs:
           load: true
           tags: ghost-ses-proxy:ci
 
-      - name: Syntax-check every source file
+      - name: Syntax-check the built entrypoint
         run: |
-          docker run --rm --entrypoint sh ghost-ses-proxy:ci -c \
-            'for f in server.js lib/*.js; do node --check "$f" || exit 1; done'
+          docker run --rm --entrypoint node ghost-ses-proxy:ci --check dist/index.js
 
       - name: Verify runtime dependencies resolve in the image
         run: |
@@ -37,4 +52,7 @@ jobs:
             require('@aws-sdk/client-sqs');
             require('busboy');
             require('uuid');
+            require('pino');
+            require('pino-http');
+            require('prom-client');
           "

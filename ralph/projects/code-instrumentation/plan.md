@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 16 complete
-> **Current phase:** Phase 17
+> **Status:** In progress — Phase 17 complete
+> **Current phase:** Phase 18
 
 ---
 
@@ -1367,38 +1367,65 @@ Deletion happens here rather than earlier because the Dockerfile's `COPY server.
 
 ### Tasks
 
-- [ ] **17.1** Convert the Dockerfile to a multi-stage build
+- [x] **17.1** Convert the Dockerfile to a multi-stage build
   - File: `Dockerfile`
   - Use the design §7 layout verbatim. Both stages are `node:20-alpine` so the `better-sqlite3` binding compiled in the builder is ABI-compatible with the runtime; `python3`, `make`, and `g++` stay in the builder and disappear from the final image.
   - Preserve `mkdir -p /data`, the `HEALTHCHECK`, `EXPOSE 3003`, and the container user (root) — design explicitly pins the user and `/data` volume layout, because changing either risks breaking the existing volume's permissions.
   - `COPY package.json ./` into the runtime stage is required — `getVersion()` resolves `../package.json` from `dist/`.
 
-- [ ] **17.2** Update `.dockerignore`
+- [x] **17.2** Update `.dockerignore`
   - Add `test/`, `coverage/`, `dist/`, `.github/`, `ralph/`.
   - It must **not** ignore `src/` or `tsconfig*.json` — the builder stage needs both.
 
-- [ ] **17.3** Delete the JavaScript implementation
+- [x] **17.3** Delete the JavaScript implementation
   - Delete `server.js` and all 10 files under `lib/`.
   - Keep `scripts/capture-golden.cjs`, `scripts/normalize.cjs`, and `scripts/Dockerfile.capture` — they are the reproducibility record (design §8.5), regenerable with `git checkout <sha> && docker build -f scripts/Dockerfile.capture …`, and never run in CI. `scripts/normalize.cjs` is additionally a runtime dependency of the contract test.
 
-- [ ] **17.4** Add the CI test job
+- [x] **17.4** Add the CI test job
   - File: `.github/workflows/ci.yml`
   - New `test` job: `actions/setup-node@v4` with `node-version: '20'` and `cache: 'npm'`, then `npm ci`, `npm run typecheck`, `npm run test:coverage`. Coverage thresholds are enforced by `vitest.config.ts`, so a regression fails the job.
   - Update the `docker-build` job's smoke checks:
     - Replace the `server.js`/`lib/*.js` syntax check with **`node --check dist/index.js`**. Do **not** use a check that *loads* `dist/index.js`: per Phase 16.3 it calls `loadConfig()` and `process.exit(1)`, and the existing `docker run` passes no environment variables, so requiring it would turn `docker-build` red on every PR (critique finding 5). `node --check` is syntax-only, matching exactly what the current check proves.
     - Keep the dependency-resolution check and **add `pino`, `pino-http`, and `prom-client`** — the three new runtime dependencies, and the ones most likely to be lost to a misconfigured `npm prune --omit=dev` in the new multi-stage build. `uuid` is still used for batch message IDs; keep it.
 
-- [ ] **17.5** Verify the image end-to-end
+- [x] **17.5** Verify the image end-to-end
   - `docker build -t ghost-ses-proxy:verify .`
   - Confirm the runtime image no longer contains the build toolchain: `docker run --rm --entrypoint sh ghost-ses-proxy:verify -c 'which g++ make python3 || echo "toolchain absent"'`.
   - Run the container with placeholder credentials and a writable `/data`, and confirm `/health` and `/metrics` respond and the `HEALTHCHECK` passes.
   - Record the image size before/after the multi-stage change in Observations.
 
-- [ ] **17.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage && docker build -t ghost-ses-proxy:verify .` — all tests pass and the image builds
+- [x] **17.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage && docker build -t ghost-ses-proxy:verify .` — all tests pass and the image builds
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/index.js`, `test:coverage` runs **546 tests across 22 files** at **100% statements / branches / functions / lines**, and `docker build` succeeds. No flake recurred this phase (the Phase 16 `socket hang up` was not seen in any of this phase's runs).
+
+**Files modified.** `Dockerfile` (multi-stage, design §7 verbatim), `.dockerignore`, `.github/workflows/ci.yml`. **Deleted:** `server.js` and all ten `lib/*.js` (`git rm`).
+
+**Image size: 630MB → 163MB (−74%).** The "before" number was measured by building the pre-change `Dockerfile` as `ghost-ses-proxy:before` *before* editing anything; that tag was removed afterwards. The saving is `python3`/`make`/`g++` plus the intermediate build artifacts, all of which now stay in the builder stage. Confirmed absent in the runtime image: `which g++ make python3` → `toolchain absent`.
+
+**Deviation — none of substance.** The Dockerfile is design §7 verbatim; `mkdir -p /data`, the `HEALTHCHECK`, `EXPOSE 3003`, and the root container user are all preserved, as is `COPY package.json ./` in the runtime stage (verified below that `getVersion()` resolves it rather than falling back to `unknown`).
+
+**`.dockerignore` entries are written without trailing slashes** (`test`, `coverage`, `dist`, `.github`, `ralph`), matching the file's existing style (`node_modules`, `data`). Docker treats these as path patterns that match the directories either way. `src/`, `tsconfig*.json`, `package.json`, and `package-lock.json` are deliberately **not** ignored — the builder stage needs all four, and the runtime stage needs `package.json`.
+
+**Legacy deletion was safe to do here.** Grepped `src/`, `test/`, `scripts/`, `.github/`, and `README.md` for `server.js` / `lib/` before deleting: the only live references were `Dockerfile` and `ci.yml` (both rewritten in this phase) and `scripts/Dockerfile.capture` + `scripts/capture-golden.cjs`, which are the deliberate exception — they exist to run against the pre-rewrite tree via `git checkout <sha>` (design §8.5) and are never run in CI. Everything else was prose in comments or in `test/golden/**` fixture `_meta` / `REJECTED.md`, describing the *old* behavior as a historical record. `scripts/normalize.cjs` is still a runtime dependency of `test/helpers/normalize.ts`, so all three `scripts/` files stay.
+
+**CI changes (task 17.4).**
+- New `test` job runs before/alongside `docker-build`: `actions/checkout@v4`, `actions/setup-node@v4` (`node-version: '20'`, `cache: 'npm'`), `npm ci`, `npm run typecheck`, `npm run test:coverage`.
+- The `server.js`/`lib/*.js` syntax loop is replaced by `docker run --rm --entrypoint node ghost-ses-proxy:ci --check dist/index.js`. It is spelled with `--entrypoint node` + `--check` as an argument, **not** `sh -c 'node --check …'`, and it deliberately does not *load* the entrypoint — per Phase 16.3, `dist/index.js` calls `loadConfig()` and `process.exit(1)`, and the job passes no env, so a `require` would turn `docker-build` red on every PR (critique finding 5). Verified locally: prints nothing, exits 0.
+- The dependency-resolution check gains `pino`, `pino-http`, and `prom-client`. `uuid` kept — still used for batch message IDs. Verified locally against `ghost-ses-proxy:verify`: all nine resolve, so `npm prune --omit=dev` in the builder is not dropping a runtime dependency.
+
+**End-to-end container verification (task 17.5).** Ran `ghost-ses-proxy:verify` with placeholder AWS credentials, `PROXY_API_KEY`, `MAILGUN_DOMAIN`, and no `DB_PATH` (so it used the default `/data/ses-proxy.db` inside the container):
+- Docker's own `HEALTHCHECK` reached `healthy` — the `wget --spider` form works in the slimmer runtime image, which no longer has the build toolchain.
+- `GET /health` → `{"status":"ok","tables":{"message_map":0,"recipient_emails":0,"events":0,"suppressions":0}}`
+- `GET /metrics` → `ghost_ses_proxy_build_info{version="1.0.0",node_version="v20.20.2"} 1`, the four `ghost_ses_proxy_db_rows{table=…}` series, and unprefixed `process_cpu_seconds_total`. `version="1.0.0"` rather than `unknown` confirms `COPY package.json ./` is doing its job; `node_version` reads `v20.20.2` in the container versus the host's `v24.13.1`, as expected.
+- First log line is the structured `SQS poller started` info line; `docker stop` produced one `{"component":"lifecycle","signal":"SIGTERM","durationMs":2,"msg":"shutdown complete"}` line and exit code **0** — graceful shutdown works under a real SIGTERM, not just the unit test.
+- The AWS SDK's `NodeVersionSupportWarning` (SDK versions published after early January 2027 will require node ≥22) is printed on stderr under `node:20-alpine`. Harmless today and it does not reach any metric or structured log line, but it is a real deadline: the image will need `node:22-alpine` before the SDK drops node 20. Out of scope here.
+
+**Notes for Phase 18.**
+- `README.md` currently has no reference to `server.js` or `lib/`, so 18.2 is additive documentation rather than a correction of stale paths.
+- 18.4's logging compliance review still owes a decision on `component: 'lifecycle'` (Phase 16 Deviation 3) — it is not in design §3's enum. The container run above shows it on the real shutdown path, so whatever 18.4 decides applies to production output, not just tests.
+- `.dockerignore` ignores `*.md`, so a future task that needs a Markdown file inside the image would have to negate that pattern.
 
 ---
 

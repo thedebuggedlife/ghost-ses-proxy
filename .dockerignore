@@ -6,3 +6,8 @@ data
 *.md
 docker-compose*.yml
 LICENSE
+test
+coverage
+dist
+.github
+ralph
