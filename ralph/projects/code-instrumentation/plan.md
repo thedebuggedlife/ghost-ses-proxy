@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 15 complete
-> **Current phase:** Phase 16
+> **Status:** In progress — Phase 16 complete
+> **Current phase:** Phase 17
 
 ---
 
@@ -1288,37 +1288,74 @@ Every mutation was reverted with `git checkout src` and the suite returned to 67
 
 ### Tasks
 
-- [ ] **16.1** Implement the shutdown sequence as testable code
+- [x] **16.1** Implement the shutdown sequence as testable code
   - File: `src/shutdown.ts`
   - `createShutdownHandler({ server, poller, cleanupTimer, db, logger }): (signal: string) => Promise<void>`
   - Order: stop accepting connections (`server.close()`), `poller.stop()`, `clearInterval(cleanupTimer)`, `db.close()`, log one structured line, then exit. Guard against a second signal re-entering the sequence.
   - This lives outside `index.ts` because `index.ts` is excluded from coverage, and graceful shutdown is **new** behavior the design calls out as a feature — untested-by-construction is not acceptable for it (Design Decision P13, critique finding 11). Today the container is SIGKILLed mid-send.
 
-- [ ] **16.2** Test the shutdown sequence
+- [x] **16.2** Test the shutdown sequence
   - File: `test/shutdown.test.ts`
   - With stubbed collaborators: each of `server.close`, `poller.stop`, `clearInterval`, and `db.close` is called, **in that order**; a second signal does not run the sequence twice; a throwing collaborator does not prevent the remaining steps.
 
-- [ ] **16.3** Implement the entrypoint
+- [x] **16.3** Implement the entrypoint
   - File: `src/index.ts`
   - The **only** file with side effects, and it must contain construction and wiring only: `loadConfig()` inside a try/catch that logs the `ConfigError` message and `process.exit(1)` (the one place the old `lib/config.js` exit behavior survives); `createLogger`; `new Registry()` + `createMetrics`; `createDb(config.dbPath, logger, metrics)`; `createStats` + `attachDbGauges`; `createSesClient`; `createApp`; `app.listen(config.port)`; `new SqsPoller(deps).start()`; `const cleanupTimer = scheduleCleanup(db, logger, metrics)`; and `process.on('SIGTERM'|'SIGINT', createShutdownHandler({…}))`.
   - **D6 stays pinned as-is** — `scheduleCleanup` does not run cleanup at startup (design §Defects, D6). A well-meaning "fix" here is out of scope.
   - Replace `server.js`'s five startup `console.log` lines with a single structured `info` line carrying `port`, `domain`, `region`, `configurationSet`, and `sendConcurrency`.
 
-- [ ] **16.4** Flip the package entrypoint
+- [x] **16.4** Flip the package entrypoint
   - File: `package.json`
   - `"main": "dist/index.js"` and `"start": "node dist/index.js"` (design §1).
 
-- [ ] **16.5** Smoke-test the built entrypoint by hand
+- [x] **16.5** Smoke-test the built entrypoint by hand
   - `npm run build`, then run `node dist/index.js` with a temporary `DB_PATH` (e.g. `/tmp/ses-proxy-smoke.db`) and placeholder AWS credentials.
   - Verify: the process starts and logs one JSON startup line with `level: "info"` as a **string**; `curl localhost:3003/health` returns the expected shape; `curl localhost:3003/metrics` returns exposition-format output including `ghost_ses_proxy_build_info`; sending `SIGTERM` exits cleanly with no dangling handles.
   - SES/SQS calls will fail against placeholder credentials — that is expected. Confirm the poller logs the error and backs off rather than exiting.
   - Record the observed startup log line in Observations.
 
-- [ ] **16.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **16.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/index.js` (still no `dist/src/`), `test:coverage` runs **546 tests across 22 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/shutdown.ts`, `src/index.ts`, `test/shutdown.test.ts` (10 tests). **Modified:** `src/logger.ts` (one signature widening, below), `package.json` (`main` + `start`).
+
+**Deviation 1 — `createShutdownHandler` takes two extra optional fields, `graceMs` and `exit`.** The plan's signature is `{ server, poller, cleanupTimer, db, logger }`; both additions are optional and default to production behavior (`DEFAULT_SHUTDOWN_GRACE_MS = 10_000`, `process.exit`).
+- `exit` exists because a test that lets the handler call the real `process.exit` kills the vitest worker. It is spied rather than injected in one test so the default path is still covered.
+- `graceMs` exists because `server.close(cb)` only calls back once **every** connection has ended — a single idle keep-alive socket holds it open forever, so an unbounded `await` would convert "graceful shutdown" into "hangs until SIGKILL". The handler therefore races the close callback against a 10 s timer and proceeds either way. It also calls `server.closeIdleConnections()` (optional-chained; the `ClosableServer` interface declares it optional) so idle keep-alives are dropped immediately and only genuinely in-flight requests consume the grace window.
+
+**Deviation 2 — `createLogger` now takes `Pick<Config, 'logLevel'>` instead of `Config`.** `loadConfigOrExit()` must log the `ConfigError` before a `Config` exists, and the alternative was an `as Config` cast on a two-field object literal inside the one file no test can reach. `Config` still satisfies the parameter, so every existing call site is unchanged and no test needed editing.
+
+**Deviation 3 — `component: 'lifecycle'` is a new value.** Design §3's component enum is `http|send|ses|sqs|events|suppression|db|config`, which has no member for startup/shutdown. Dropping `component` entirely was rejected — the §3 field table says it appears on *all* lines. The startup line and both shutdown lines (`shutdown complete`, `shutdown already in progress, ignoring signal`) therefore carry `component: 'lifecycle'`; the pre-config fatal carries `component: 'config'`. **Phase 18.4's logging compliance review should either adopt this into the design's enum or rename it** — it is a deliberate, recorded extension, not an oversight.
+
+**Ordering is enforced by a recorded call log, not by mock call counts.** `test/shutdown.test.ts` pushes a label from each stub into one shared array and asserts the array equals `['server.close', 'poller.stop', 'clearInterval', 'db.close']`. `clearInterval` is spied via `vi.spyOn(globalThis, 'clearInterval')` with an implementation that records *and calls through* — a recording-only mock would leave the harness's own 60 s interval dangling in the worker.
+
+**Error tolerance is per step.** Every step runs inside an `attempt(step, fn)` wrapper that logs `{ err, step }` at `error` and continues; a throwing `server.close` still reaches `db.close`, and the handler still exits 0. Re-entry is guarded by a single `inProgress` flag checked before the first step, so a second signal arriving *mid-drain* (not just after completion) is also ignored — both cases are tested.
+
+**Smoke test (task 16.5), observed startup line:**
+
+```json
+{"level":"info","time":"2026-07-29T04:20:26.321Z","service":"ghost-ses-proxy","version":"1.0.0","component":"lifecycle","port":3003,"domain":"example.com","region":"us-east-1","configurationSet":"ghost-ses-proxy","sendConcurrency":10,"msg":"ghost-ses-proxy listening"}
+```
+
+`level` is the string `"info"` and `time` is ISO-8601, as design §3 requires. Also verified against `node dist/index.js` with `DB_PATH` pointed at a scratch file:
+- `GET /health` → `{"status":"ok","tables":{"message_map":0,"recipient_emails":0,"events":0,"suppressions":0}}`
+- `GET /metrics` → `Content-Type: text/plain; version=0.0.4; charset=utf-8`, containing `ghost_ses_proxy_build_info{version="1.0.0",node_version="v24.13.1"} 1`, the four `ghost_ses_proxy_db_rows{table=...}` series (so the `attachDbGauges` collect callback is wired), and unprefixed `process_cpu_seconds_total`.
+- Neither request produced an access-log line — `autoLogging.ignore` is working end to end.
+- The poller logged `SQS poll failed` (`InvalidClientTokenId`) and retried 5.2 s later rather than exiting, matching `POLL_ERROR_BACKOFF_MS`.
+- `SIGTERM` → one `shutdown complete` line with `durationMs: 1`, process gone, no dangling handles.
+- The `ConfigError` path was checked separately: unsetting `AWS_ACCESS_KEY_ID` and `SQS_QUEUE_URL` produces a single `level: "fatal"`, `component: "config"` line naming **both** vars and exits 1.
+
+**Note the host Node is v24.13.1** while the image is `node:20-alpine`, so `build_info{node_version}` will read `v20.x` in the container. Nothing asserts a specific value.
+
+**One flaky failure was observed and did not reproduce.** The first `test:coverage` run failed `test/contract.test.ts > reproduces http-events-filter-event.json` with `Error: socket hang up`. Re-running that file alone (67/67 pass) and the full suite twice more (546/546 pass, twice) were all clean, and nothing in this phase touches the events route or supertest. Recorded as a supertest/ephemeral-port flake; if it recurs in Phase 17's CI run it is worth a real look rather than another retry.
+
+**Notes for Phase 17.**
+- `package.json` now says `"main": "dist/index.js"` / `"start": "node dist/index.js"`, so `server.js` and `lib/` are referenced **only** by `Dockerfile` (`COPY server.js` / `COPY lib/`), `.github/workflows/ci.yml`'s smoke check, and `scripts/Dockerfile.capture`. The capture image is a deliberate exception — it must keep copying them, because it exists to run against the pre-rewrite tree (design §8.5). Do **not** delete `scripts/capture-golden.cjs`, `scripts/Dockerfile.capture`, or `scripts/normalize.cjs`; `test/helpers/normalize.ts` requires the last one at test time, so deleting it would break the contract suite.
+- The runtime stage must `COPY package.json ./` — `getVersion()` resolves `../package.json` from `dist/`, and the smoke test above confirms it returns `1.0.0` rather than the `unknown` fallback.
+- `.dockerignore` must not exclude `package.json` for the same reason.
 
 ---
 

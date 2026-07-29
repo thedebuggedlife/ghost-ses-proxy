@@ -16,7 +16,7 @@ export function getVersion(load?: (id: string) => unknown): string {
 }
 
 export function createLogger(
-  config: Config,
+  config: Pick<Config, 'logLevel'>,
   destination?: DestinationStream,
 ): Logger {
   const options: LoggerOptions = {

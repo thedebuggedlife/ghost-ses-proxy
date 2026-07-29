@@ -2,9 +2,9 @@
   "name": "ghost-ses-proxy",
   "version": "1.0.0",
   "description": "Send Ghost newsletter emails through AWS SES instead of Mailgun — drop-in Mailgun API proxy",
-  "main": "server.js",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit",
