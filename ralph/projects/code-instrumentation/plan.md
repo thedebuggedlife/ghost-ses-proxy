@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 9 complete
-> **Current phase:** Phase 10
+> **Status:** In progress — Phase 10 complete
+> **Current phase:** Phase 11
 
 ---
 
@@ -888,7 +888,7 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
 
 ### Tasks
 
-- [ ] **10.1** Implement the observability middleware
+- [x] **10.1** Implement the observability middleware
   - File: `src/middleware/observability.ts`
   - Two exports wired together by `createApp` in Phase 11:
     - `createHttpLogger(deps)` — `pino-http` with `genReqId: () => randomUUID()`, the deps logger bound to `component: 'http'`, `customLogLevel` mapping 4xx→`warn` and 5xx→`error`, trimmed serializers emitting only `method`, `url`, `route`, `statusCode`, `responseTime`, and `autoLogging.ignore` returning true for `/health` and `/metrics` (design §3 — otherwise the 30-second healthcheck alone writes 2,880 lines/day into Loki).
@@ -900,15 +900,49 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
     Never use `req.path` or `req.originalUrl`: `DELETE /v3/:domain/:type/:email` embeds a subscriber's address, which would make cardinality unbounded and leak PII into Prometheus. Requests rejected by the `/v3` auth middleware before routing, and 404s, both label `unmatched` — losing per-route attribution on 401s is the accepted cost.
   - Per Design Decision P5, metrics count `/health` and `/metrics` too; only access logging suppresses them.
 
-- [ ] **10.2** Test the observability middleware
+- [x] **10.2** Test the observability middleware
   - File: `test/middleware/observability.test.ts`
   - Mount both middlewares on a throwaway express app with representative routes and drive it with supertest. Assert: the counter and histogram record `method`/`route`/`status_code`; **the `route` label is the template, not the raw path**; unmatched routes and pre-routing 401s label `unmatched`; **an email address in the request path never appears in any label value** (walk `register.getMetricsAsJSON()` and assert no label value contains `@`) — this is the cardinality/PII regression test; `/health` and `/metrics` produce no access-log line while other paths do; the `authorization` header never appears unredacted in a log line.
 
-- [ ] **10.3** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **10.3** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All three tasks done; the gate is green — `typecheck` clean, `build` emits `dist/middleware/observability.js` (still no `dist/src/`), `test:coverage` runs **311 tests across 14 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/middleware/observability.ts`, `test/middleware/observability.test.ts` (28 tests). No existing file was modified.
+
+**Deviation 1 — `route` is a top-level log field, NOT part of the `req` serializer.** The plan's 10.1 asks for "trimmed serializers emitting only `method`, `url`, `route`, `statusCode`, `responseTime`". Putting `route` in the `req` serializer **cannot work**: `pino-http` binds the request with `logger.child({ req })` in the middleware, and pino resolves child bindings **eagerly** — the serializer runs at `child()` time, before Express has routed. Found by an actual failing assertion, not by inspection:
+
+```
+- "route": "/v3/:domain/messages"
++ "route": "unmatched"
+```
+
+The fix is `customSuccessObject` / `customErrorObject`, both of which pino-http evaluates in `onResFinished` (after routing). So an access line is `{reqId, component:'http', req:{method,url}, route, res:{statusCode}, responseTime, level, msg}` — every design §3 field is present, `route` just sits one level up. Do **not** "tidy" it back into the `req` serializer.
+
+**Deviation 2 — `wrapSerializers: false`.** pino-http defaults `wrapSerializers` to true, which composes a custom serializer *on top of* `pino-std-serializers`' output (`{id, method, url, query, params, headers, remoteAddress, remotePort, raw}`) rather than handing it the raw request. With the default, `serializeRequest` would receive an object with no `route`/`baseUrl` and a `url` already rewritten by the std serializer. Turning wrapping off is what makes the trimmed serializers actually trim.
+
+**Deviation 3 — `quietReqLogger: true`.** Without it, `reqId` never appears as a field (pino-http only emits the id inside the default `req` serializer, which we replaced) and `req.log` carries the `req` binding instead. With it, `req.log` is a child bound to `{reqId}` only — which is exactly what design §3's "`reqId` … propagated into send/SES lines" needs. **Phase 13 should log through `req.log`** (or read `req.id`) to get free correlation with the access line.
+
+**Deviation 4 — `customLogLevel` ignores its `error` argument.** The plan says "4xx→`warn` and 5xx→`error`"; the implementation keys purely off `res.statusCode`. pino-http passes an `Error` only when the socket errors, which no supertest-driven case can produce, so an `err ||` clause would have been a permanently-uncovered branch. Express turns a thrown handler error into a 500 before `finish`, so the `error` level is still reached — pinned by a test.
+
+**Discovery — Express drops the mount prefix from `req.baseUrl` while unwinding to an error handler.** A route inside `app.use('/v3', router)` that **throws** ends up labelled `/:domain/boom`, not `/v3/:domain/boom`: by the time `res.on('finish')` runs, Express has restored `req.baseUrl` to `''` while leaving `req.route` set. A route on the same router that returns normally labels correctly (`/v3/:domain/:type/:email` is asserted). The design's formula (`req.route ? \`${req.baseUrl}${req.route.path}\` : 'unmatched'`) is implemented verbatim and the quirk is **pinned as observed behavior** by `loses the mount prefix when a route inside a mounted router throws` — the label is still a bounded template with no PII, so §4.1's actual guarantee holds. **Phase 11.3 can avoid it entirely by registering routes directly on the app** (`app.post('/v3/:domain/messages', …)`) rather than mounting a `/v3` router; if a router is used, expect a second series for any route that throws.
+
+**Module shape.** Exports `UNMATCHED_ROUTE`, `ACCESS_LOG_IGNORED_PATHS`, `routeLabel(req)`, `requestPath(url)`, `serializeRequest`, `serializeResponse`, `createHttpLogger(deps)`, `createHttpMetrics(deps)`. Both factories take `Pick<Deps, …>` (`'logger'` / `'metrics'`), so Phase 11's `createApp` can pass the whole `Deps`. The four small helpers are exported so their defensive branches (`baseUrl` absent, `route.path` non-string, `url` undefined, no query string) are covered by direct unit tests instead of contrived HTTP requests.
+
+**Metrics count `/health` and `/metrics`; only access logging suppresses them** (P5) — asserted both ways in one test. `autoLogging.ignore` matches on `requestPath(req.url)`, so `/health?verbose=1` is suppressed too (pinned by a test); the ignore callback runs before routing, so `req.url` is still the original path there.
+
+**PII/cardinality regression test.** After a `DELETE /v3/example.com/bounces/alice%40example.com`, the test walks **every** label value of **every** metric in `register.getMetricsAsJSON()` (app metrics, default `process_*`/`nodejs_*`, and the `db_rows`/`db_size_bytes` gauges `makeDeps` attaches) and asserts none contains `@` or `alice`. It also asserts the label list is non-empty, so a registry that silently collected nothing cannot pass.
+
+**Redaction is moot, not exercised.** `createLogger`'s `redact: ['req.headers.authorization', 'req.headers.cookie']` never fires here because the trimmed `req` serializer drops `headers` entirely — a stronger guarantee than redaction. The test asserts the raw credential, the string `authorization`, and a cookie value are all absent from the captured log stream.
+
+**`pinoHttp(...)` needs `as unknown as RequestHandler`.** Its `HttpLogger` type is `(req: IncomingMessage, res: ServerResponse, next?: () => void) => void` plus a `.logger` property; the direct assignment to Express's `RequestHandler` does not typecheck under `strictFunctionTypes`.
+
+**Notes for Phase 11.**
+- Mount order in `createApp` must be `createHttpLogger` → `createHttpMetrics` → routes → error handler. The metrics middleware installs its `finish` listener and calls `next()` synchronously, so it must not sit behind anything that can short-circuit (the `/v3` auth middleware in particular) or 401s would go uncounted.
+- `createHttpMetrics` uses `performance.now()` and observes seconds, matching `src/ses-client.ts`.
+- `status_code` is stringified (`String(res.statusCode)`) so the label reads back as `'200'` from `getMetricsAsJSON()`, not `200`.
 
 ---
 
