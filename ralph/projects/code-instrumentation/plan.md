@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 5 complete
-> **Current phase:** Phase 6
+> **Status:** In progress — Phase 6 complete
+> **Current phase:** Phase 7
 
 ---
 
@@ -615,41 +615,66 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
 
 ### Tasks
 
-- [ ] **6.1** Implement retention cleanup with the D2 fix
+- [x] **6.1** Implement retention cleanup with the D2 fix
   - File: `src/cleanup.ts`
   - `runCleanup(db: Db, logger: Logger, metrics: Metrics): void`
   - Deletes rows older than 90 days from **exactly three** tables: `message_map`, `recipient_emails`, `events`. **`suppressions` is removed from the list** (design §5.2) — permanent bounces and spam complaints must never expire, and the only supported removal path stays `DELETE /v3/:domain/:type/:email`.
   - Use prepared statements with `changes` to count deleted rows per table, feeding `db_cleanup_deleted_rows_total{table}`; record `db_cleanup_runs_total{outcome}` as `success` or `error`; wrap in try/catch and log with `component: 'db'`.
 
-- [ ] **6.2** Implement the cleanup scheduler
+- [x] **6.2** Implement the cleanup scheduler
   - File: `src/cleanup.ts`
   - `scheduleCleanup(db: Db, logger: Logger, metrics: Metrics, intervalMs = 86_400_000): NodeJS.Timeout`
   - Returns the timer handle so the shutdown path can clear it. The interval callback **must close over the three arguments** — `setInterval(runCleanup, ms)` would invoke `runCleanup(undefined, undefined, undefined)`, and because `runCleanup` swallows its own errors, retention would silently stop with nothing but a `db_cleanup_runs_total{outcome="error"}` tick to show for it (critique finding 4). This function lives here rather than in `index.ts` precisely so a test can catch that (Design Decision P13).
   - Do **not** call `runCleanup` at startup — D6 stays pinned as-is (design §Defects). Do not `unref()` the timer.
 
-- [ ] **6.3** Test cleanup and the scheduler, including the D2 regression
+- [x] **6.3** Test cleanup and the scheduler, including the D2 regression
   - File: `test/cleanup.test.ts`
   - Backdate `created_at` on seeded rows. Assert: 200-day-old rows are deleted from `message_map`/`recipient_emails`/`events`; **a 200-day-old `suppressions` row survives** (D2 regression — this test is the reason the defect cannot come back); 30-day-old rows survive everywhere; `db_cleanup_deleted_rows_total` records per-table counts; a forced failure records `outcome="error"` and does not throw out of `runCleanup`.
   - With fake timers: `scheduleCleanup` does **not** run cleanup at startup (D6); it runs it after the interval elapses; the run actually deletes rows, which is what proves the arguments were passed; `clearInterval` on the returned handle stops further runs.
 
-- [ ] **6.4** Implement the TTL-cached stats collector
+- [x] **6.4** Implement the TTL-cached stats collector
   - File: `src/stats.ts`
   - `createStats(db: Db, ttlMs = 15_000): Stats` returning `{ getCounts(now: number = Date.now()): TableCounts }`, exactly as design §4.6 sketches. The injected `now` lets tests control expiry without fake timers.
   - One set of four `COUNT(*)` queries serves both `/health` and the `db_rows` gauge, replacing today's four scans per healthcheck every 30 seconds.
 
-- [ ] **6.5** Wire the database gauges
+- [x] **6.5** Wire the database gauges
   - File: `src/stats.ts`
   - `attachDbGauges(metrics: Metrics, stats: Stats, db: Db): void` — registers `collect()` callbacks so `db_rows{table}` is populated from `stats.getCounts()` and `db_size_bytes` from `PRAGMA page_count * PRAGMA page_size`. Using `collect()` rather than push-updating keeps the gauges correct without a background timer.
 
-- [ ] **6.6** Test stats and gauges
+- [x] **6.6** Test stats and gauges
   - File: `test/stats.test.ts`
   - Returns live counts; serves the cached value within the TTL (insert a row, assert the count is unchanged); recomputes after the TTL via the injected `now`; `attachDbGauges` makes `db_rows` and `db_size_bytes` appear in `register.getMetricsAsJSON()` with correct values.
 
-- [ ] **6.7** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **6.7** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All seven tasks done; the gate is green — `typecheck` clean, `build` emits `dist/{cleanup,config,db,logger,metrics,schema,stats,types}.js` (still no `dist/src/`), `test:coverage` runs **135 tests across 6 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/cleanup.ts`, `src/stats.ts`, `test/cleanup.test.ts` (17 tests), `test/stats.test.ts` (14 tests). No existing file was modified.
+
+**`src/cleanup.ts` shape.** Exports `RETENTION_DAYS` (90), `DEFAULT_CLEANUP_INTERVAL_MS` (86_400_000), `CLEANUP_TABLES`, `runCleanup`, `scheduleCleanup`. `CLEANUP_TABLES` is `TABLE_NAMES.filter((t): t is CleanupTable => t !== 'suppressions')` with a type predicate, so `Exclude<…, 'suppressions'>` is enforced *by the compiler* — adding `suppressions` back to the cleanup loop is now a type error, not just a failing test. That is the structural half of the D2 fix; `test/cleanup.test.ts` is the behavioural half.
+
+**`runCleanup` records per-table deltas even when they are zero.** `dbCleanupDeletedRowsTotal.inc({table}, changes)` runs unconditionally, so the three series exist from the first run and Grafana never sees a metric appear out of nowhere. The `suppressions` series is asserted **absent** (the intent fixture's `must never be observed`), and because the label set is derived from `CLEANUP_TABLES` it cannot be created by accident.
+
+**Deviation — `runCleanup` prepares its DELETE statements per call rather than caching them.** It runs once a day; caching would mean either a module-level `WeakMap` keyed by `Db` or a factory signature the plan does not specify. Interpolating the table name into the SQL is safe because the names come from the `TABLE_NAMES` const tuple, never from input.
+
+**Deviation — the error path keeps its partial progress.** `runCleanup` wraps the whole loop in one try/catch, so a failure on table *n* leaves tables *0…n−1* already deleted and their counters already incremented. `test/cleanup.test.ts` pins this ("keeps the deletions it completed before a failure"): `DROP TABLE events` then `runCleanup` leaves `message_map` and `recipient_emails` purged with their counters at 1, records `db_cleanup_runs_total{outcome="error"}`, and does not throw. Restarting from scratch on the next daily run is correct — the deletes are idempotent.
+
+**Forcing the error path needs `DROP TABLE`, not bad input** — the same discovery as Phase 5's `db_errors_total` test. A `DELETE … WHERE created_at < …` cannot be made to fail with data; only schema absence does it.
+
+**`src/stats.ts` shape.** `createStats(db, ttlMs = 15_000)` prepares the four `COUNT(*)` statements **once at construction** (the handle is open then) and closes over a `{at, counts}` cache. `attachDbGauges(metrics, stats, db)` installs `collect()` callbacks on `dbRows` and `dbSizeBytes`. `db_size_bytes` is `PRAGMA page_count × PRAGMA page_size`, both read through `pragma(…, {simple: true})` and `Number()`-coerced (better-sqlite3 types the return as `unknown`).
+
+**prom-client does not declare `collect` on the metric classes.** `GaugeConfiguration.collect` exists but the `Gauge` class body has no `collect` property, even though `lib/metric.js` sets it and `lib/gauge.js:109` calls it from `get()`. `attachDbGauges` therefore assigns through a narrow `Collectable` cast — the same workaround `test/metrics.test.ts` uses for `labelNames`/`upperBounds`. Verified against prom-client 15.1.3.
+
+**Test correction worth knowing — `getMetricsAsJSON()` *is* a scrape.** A test asserting "db_rows is empty until a scrape happens" is unwritable: the only way to read the values invokes `collect()` and thereby populates them. The test was rewritten to assert the useful property instead (a row inserted between two scrapes appears on the second without any push update), which is what "no background timer" actually means.
+
+**Cache semantics pinned by `test/stats.test.ts`.** The TTL window is `now - cache.at < ttlMs`, so expiry is inclusive at exactly `ttlMs` (`getCounts(15_000)` after `getCounts(0)` recomputes). The cache stamps `at` from the **recompute** time, not the first call. Within the window the *identical object* is returned (`toBe`, not `toEqual`) — callers must not mutate it.
+
+**Notes for later phases.**
+- Phase 11's `/health` route and Phase 16's `index.ts` both consume `createStats`; `attachDbGauges` must be called exactly once per registry, and `index.ts` should hold the `scheduleCleanup` handle so the Phase 16 shutdown path can `clearInterval` it.
+- `Deps` in `src/types.ts` has **no `stats` field**. Phase 9.5's `makeDeps()` and Phase 11's `createApp(deps)` need to decide whether `stats` joins `Deps` or is passed alongside; the design's `Deps` sketch (§2) lists only `config/logger/metrics/db/ses`, so passing it separately keeps `Deps` matching the design.
+- `scheduleCleanup` does not `unref()` its timer (plan 6.2), so any future test that calls it without fake timers will hold the Vitest process open for 24 hours. Every scheduler test here uses `vi.useFakeTimers()` and `clearInterval`s the handle.
 
 ---
 
