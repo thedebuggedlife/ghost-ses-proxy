@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 2 (Phase 1 complete)
+> **Current phase:** Phase 3 (Phase 2 complete)
 
 ---
 
@@ -149,21 +149,34 @@ Build a self-contained AWS CDK TypeScript package under `cdk/` that provisions a
 
 ### Tasks
 
-- [ ] **2.1** Add topic, queue, DLQ, and subscription to the stack
+- [x] **2.1** Add topic, queue, DLQ, and subscription to the stack
   - File: `cdk/lib/ghost-ses-proxy-stack.ts`
   - Per design §3 sketch: `sns.Topic` (name `config.snsTopicName`); DLQ `sqs.Queue` named `` `${config.sqsQueueName}-dlq` `` with 14-day retention, created only when `config.dlqMaxReceiveCount > 0`; main `sqs.Queue` with configured name, retention, visibility timeout, and `deadLetterQueue` when DLQ exists; `topic.addSubscription(new subscriptions.SqsSubscription(queue, { rawMessageDelivery: false }))`.
   - Add `CfnOutput` `SqsQueueUrl` (design §4). Keep the queue/topic as stack fields (`public readonly`) for later phases.
 
-- [ ] **2.2** Test scaffolding + messaging assertions
+- [x] **2.2** Test scaffolding + messaging assertions
   - File: `cdk/test/stack.test.ts`
   - Create the `makeTemplate(envOverrides?: Record<string,string>)` helper: builds env from a minimal base (`SES_DOMAIN=example.com`) + overrides → `parseConfig` → `new App()` → stack → `Template.fromStack`. (Route53 context seeding comes in Phase 3 — design Test Plan.)
   - Assertions per design Test Plan: queue name (`ghost-ses-proxy-events` under the default env — names derive from `STACK_NAME`, design §2)/retention (14 days = 1209600 s)/redrive to `<name>-dlq` with `maxReceiveCount: 5`; DLQ absent when `DLQ_MAX_RECEIVE_COUNT=0`; queue policy allows `sqs:SendMessage` from `sns.amazonaws.com` conditioned on the topic ARN; subscription `RawMessageDelivery` false or absent; `SqsQueueUrl` output present.
 
-- [ ] **2.3** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
+- [x] **2.3** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (2 files, 43 tests — 34 config + 9 stack), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with no AWS credentials.
+
+**Implementation notes / decisions:**
+- Stack exposes `public readonly topic`, `queue`, `deadLetterQueue?` (the last is `undefined` when `DLQ_MAX_RECEIVE_COUNT=0`). Phase 3 uses `topic` for the SES event destination; Phase 4 uses `queue.queueArn`.
+- `CfnOutput` construct id is used verbatim as the CloudFormation output key (verified in the synthesized template: `Outputs.SqsQueueUrl`). No `exportName` is set — the outputs are for humans and `generate-env`, not cross-stack references. Later phases must keep using the design §4 key as the construct id.
+- The visibility timeout is always emitted (`VisibilityTimeout: 30` by default), so tests can assert it directly.
+
+**Observed synth output shape (useful for Phase 3/4 assertions):**
+- `SqsSubscription` emits `RawMessageDelivery: false` explicitly (not omitted), plus an `AWS::SQS::QueuePolicy` with `Action: 'sqs:SendMessage'`, `Principal: { Service: 'sns.amazonaws.com' }`, `Condition: { ArnEquals: { 'aws:SourceArn': { Ref: <topicLogicalId> } } }`. The subscription resource `DependsOn` the queue policy.
+- Logical IDs are hash-suffixed (`EventsQueueB96EB0D2`, `EventsDlqACDA5DFF`, `EventsTopic063726A1`). Tests never hardcode them — they resolve IDs via `template.findResources(...)` and feed them into `Fn::GetAtt`/`Ref` matchers. Keep that pattern in Phase 3/4.
+
+**Test helper:** `makeTemplate(envOverrides?)` is **exported** from `cdk/test/stack.test.ts` (base env `SES_DOMAIN=example.com`, overrides merged in, straight through `parseConfig` — `process.env` is never touched). Phase 3 extends it with the optional Route53 context-seeding flag rather than writing a second helper.
+
+**Files modified:** `cdk/lib/ghost-ses-proxy-stack.ts`. **Added:** `cdk/test/stack.test.ts`.
 
 ---
 
