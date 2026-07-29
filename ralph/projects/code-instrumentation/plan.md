@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 10 complete
-> **Current phase:** Phase 11
+> **Status:** In progress — Phase 11 complete
+> **Current phase:** Phase 12
 
 ---
 
@@ -952,15 +952,15 @@ The fix is `customSuccessObject` / `customErrorObject`, both of which pino-http 
 
 ### Tasks
 
-- [ ] **11.1** Implement the health route
+- [x] **11.1** Implement the health route
   - File: `src/routes/health.ts`
   - `createHealthRoute(stats: Stats)` returning a handler that responds with the **exact current shape** — `{ status: 'ok', tables: { message_map, recipient_emails, events, suppressions } }` — backed by `stats.getCounts()` rather than four fresh `COUNT(*)` scans (D5). Ghost does not consume this, but the Docker `HEALTHCHECK` and Phase 15's contract test do.
 
-- [ ] **11.2** Implement the metrics route
+- [x] **11.2** Implement the metrics route
   - File: `src/routes/metrics.ts`
   - `createMetricsRoute(register: Registry)` returning a handler that sets `Content-Type` from `register.contentType` and responds with `await register.metrics()`. Served **unauthenticated**, matching `/health` (design §4 — the container is reachable only on the internal Docker network, and requiring `PROXY_API_KEY` would push the credential into Prometheus scrape config for no gain).
 
-- [ ] **11.3** Implement the application factory
+- [x] **11.3** Implement the application factory
   - File: `src/app.ts`
   - `createApp(deps: Deps & { stats: Stats }): express.Express` — builds the app, **never** calls `listen()`.
   - Middleware and route order matters:
@@ -969,19 +969,45 @@ The fix is `customSuccessObject` / `customErrorObject`, both of which pino-http 
     3. `app.use('/v3', createAuthMiddleware(deps.config))`.
     4. `/v3` routes — added by Phases 12 and 13; leave a marked insertion point.
 
-- [ ] **11.4** Test the health route
+- [x] **11.4** Test the health route
   - File: `test/routes/health.test.ts`
   - Via supertest against `createApp(makeDeps())`: returns 200 with the exact `{ status, tables: {…} }` shape; counts reflect seeded `:memory:` rows; served without an `Authorization` header.
 
-- [ ] **11.5** Test the metrics route
+- [x] **11.5** Test the metrics route
   - File: `test/routes/metrics.test.ts`
   - Returns 200 with prom-client's `Content-Type`; the body parses as Prometheus exposition format; contains `ghost_ses_proxy_`-prefixed application metrics (including `db_rows`, which proves `attachDbGauges` ran) **and** unprefixed `process_*`/`nodejs_*` defaults; served without an `Authorization` header.
 
-- [ ] **11.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **11.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/app.js` + `dist/routes/{health,metrics}.js` (still no `dist/src/`), `test:coverage` runs **330 tests across 16 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/app.ts`, `src/routes/health.ts`, `src/routes/metrics.ts`, `test/routes/health.test.ts` (9 tests), `test/routes/metrics.test.ts` (10 tests). **Modified:** `test/helpers/deps.ts` (see below).
+
+**`AppDeps` now lives in `src/app.ts`.** `createApp(deps: AppDeps)` where `export type AppDeps = Deps & { stats: Stats }`. `test/helpers/deps.ts` previously declared its own identical alias; it now imports the type from `src/app` and re-exports it (`export type { AppDeps }`), so the helper and the factory cannot drift. Every existing import of `AppDeps`/`TestDeps` from the helper still resolves — no test file needed a change.
+
+**Routes are registered directly on the app, not on a mounted `/v3` router** — Phase 10's discovery that Express drops the mount prefix from `req.baseUrl` while unwinding to an error handler. `app.use('/v3', createAuthMiddleware(...))` mounts only the *middleware* at the prefix (exactly as `server.js` does); Phases 12 and 13 must add their handlers as `app.<verb>('/v3/:domain/...', h)` at the marked insertion point, so the `route` metric label is the full template even when a handler throws.
+
+**Deviation — `/metrics` responds with `res.set(...).end(body)`, not `res.send(body)`.** Found by an actual failing assertion, not by inspection:
+
+```
+Expected: "text/plain; version=0.0.4; charset=utf-8"
+Received: "text/plain; charset=utf-8; version=0.0.4"
+```
+
+Express's `res.send()` re-sets the header through `setCharset()` for a string body, and the `content-type` module reformats the parameters in alphabetical order. Prometheus does not care, but pinning the header to prom-client's exact `register.contentType` string is a cheaper assertion than one that has to tolerate reordering. `.end()` is also the canonical prom-client/Express snippet. Do **not** switch it back to `res.send`.
+
+**`createMetricsRoute` forwards a collection failure to `next`.** `register.metrics()` is async and rejects if any `collect()` callback throws; without the rejection handler that would be an unhandled rejection that kills the process. The branch is covered by a test that registers a deliberately-throwing gauge on the deps registry and drives a bare express app (`createApp` installs no error handler, so the assertion uses Express's default one → 500). **Phase 13 or 16 should decide whether `createApp` needs its own error handler**; today an unhandled route error yields Express's default HTML 500, which the Phase 15 contract test does not exercise.
+
+**Health route behaviors now pinned.** Exact `{status:'ok', tables:{message_map, recipient_emails, events, suppressions}}` shape and key order (matching `captured/http-health.json`); counts reflect seeded rows; served with no, valid, and *invalid* `Authorization` headers alike (it sits before the `/v3` mount); `Content-Type: application/json`; the request is counted in `http_requests_total{route="/health"}` but writes **no** access-log line (P5, asserted in both route tests).
+
+**The 15-second stats TTL is visible through `/health`** — a row inserted between two healthchecks does not change the reported counts until the TTL expires. Pinned by a test rather than treated as a bug: it is the D5 fix (one set of scans per 15s instead of four per 30s healthcheck), and the Docker `HEALTHCHECK` only reads `status`.
+
+**Notes for Phase 12.**
+- Add routes at the `// --- /v3 routes are registered here (Phases 12 and 13) ---` marker in `src/app.ts`, after the auth mount.
+- `test/routes/` now exists; `vitest.config.ts`'s `include: ['test/**/*.test.ts']` already matches it.
+- `metricNames(body)` in `test/routes/metrics.test.ts` parses `# TYPE` lines out of the exposition text — reuse it rather than re-deriving if a later phase needs to assert on the rendered output.
 
 ---
 

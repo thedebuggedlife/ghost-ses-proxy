@@ -1,15 +1,14 @@
 import { Registry } from 'prom-client';
+import type { AppDeps } from '../../src/app';
 import { loadConfig } from '../../src/config';
 import { createDb } from '../../src/db';
 import { createLogger } from '../../src/logger';
 import { createMetrics } from '../../src/metrics';
 import { attachDbGauges, createStats } from '../../src/stats';
 import type {
-  Deps,
   SendRawEmailResult,
   SesClient,
   SesSendContext,
-  Stats,
 } from '../../src/types';
 
 export const TEST_ENV: NodeJS.ProcessEnv = {
@@ -66,7 +65,7 @@ export function createSesStub(): SesStub {
   return stub;
 }
 
-export type AppDeps = Deps & { stats: Stats };
+export type { AppDeps };
 
 export type TestDeps = AppDeps & {
   logs: () => Record<string, unknown>[];
