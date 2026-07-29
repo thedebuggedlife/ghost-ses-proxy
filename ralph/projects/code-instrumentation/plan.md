@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 17 complete
-> **Current phase:** Phase 18
+> **Status:** Complete — all 19 phases (0–18) landed
+> **Current phase:** — (Phase 18 was the last)
 
 ---
 
@@ -1435,35 +1435,89 @@ Deletion happens here rather than earlier because the Dockerfile's `COPY server.
 
 ### Tasks
 
-- [ ] **18.1** Update the environment examples
+- [x] **18.1** Update the environment examples
   - Files: `.env.example`, `docker-compose.example.yml`
   - Add `DB_PATH` (default `/data/ses-proxy.db`) to both.
   - Correct the `LOG_LEVEL` documentation: it was decorative and gated exactly one statement; it now gates every log call, accepts `trace|debug|info|warn|error|fatal`, and **rejects invalid values at startup**.
 
-- [ ] **18.2** Update the README
+- [x] **18.2** Update the README
   - File: `README.md`
   - Document: the `GET /metrics` endpoint and that it is unauthenticated on the internal network; the structured JSON log format and the `component`/`reqId` field schema; `npm start | npx pino-pretty` for local pretty-printing (and that `pino-pretty` is deliberately not an image dependency); `DB_PATH`; the corrected `LOG_LEVEL` semantics; the dev/test workflow (`npm run dev`, `npm test`, `npm run test:coverage`); and that the image is a drop-in replacement — same port, same env vars, same volume, same database file, rollback by re-pinning the previous tag.
   - Document the **one intentional response-shape change** (design §5.1): a send in which some recipients fail before their SES call now returns 200 with the successful recipients queued, rather than 500.
 
-- [ ] **18.3** Design compliance review — metrics
+- [x] **18.3** Design compliance review — metrics
   - Cross-check `src/metrics.ts` against design §4.1–§4.5 metric by metric: every name, type, and label set present, no extras, `ghost_ses_proxy_` prefix on application metrics only, defaults unprefixed. Confirm no label value can be unbounded or carry PII. Record any deviation and its justification in Observations.
 
-- [ ] **18.4** Design compliance review — logging
+- [x] **18.4** Design compliance review — logging
   - Cross-check emitted log lines against design §3's field schema: `time`, `level` (string), `service`, `version`, `msg` on every line; `component` correct per module (`http`/`send`/`ses`/`sqs`/`events`/`suppression`/`db`/`config`); `reqId` propagated from HTTP into send and SES lines; `authorization` redacted; nothing written to stderr.
   - Confirm no `console.log`/`warn`/`error` survives anywhere in `src/`.
 
-- [ ] **18.5** Design compliance review — pinned behavior
+- [x] **18.5** Design compliance review — pinned behavior
   - Confirm the "what stays the same — do not refactor" list from the design holds: every HTTP response body and status code except the §5.1 change, the SQLite schema, `buildRawMime` output byte-for-byte, `mapSesEvent`'s mapping table and fallback chain (the D7 guard changes only what happens on a malformed block), the base64 `{t, id}` cursor format, the container user and `/data` layout, and D6 left as-is.
   - Confirm all five defect fixes (D1, D2, D3, D4, D7) are present and each has both a unit regression test and a contract-level `intent/` assertion.
 
-- [ ] **18.6** Coverage review
+- [x] **18.6** Coverage review
   - Confirm `npm run test:coverage` meets 90/90/90/85 with the only exclusions being `src/index.ts` and `src/types.ts`. If any `src/` file sits far below the threshold while the aggregate passes, add tests for it — the aggregate can hide an untested module.
 
-- [ ] **18.7** Final build + test gate: `npm run typecheck && npm run build && npm run test:coverage && docker build -t ghost-ses-proxy:verify .` — all tests pass and the image builds
+- [x] **18.7** Final build + test gate: `npm run typecheck && npm run build && npm run test:coverage && docker build -t ghost-ses-proxy:verify .` — all tests pass and the image builds
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-29.** All seven tasks done; the gate is green end to end (`GATE_EXIT=0`): `typecheck` clean, `build` emits `dist/`, **546 tests across 22 files at 100% statements / branches / functions / lines**, `docker build` succeeds. No source file was changed in this phase — the three compliance reviews found nothing to fix.
+
+**Files modified.** `.env.example`, `docker-compose.example.yml`, `README.md`. Nothing under `src/` or `test/`.
+
+**Task 18.1.** `.env.example` gains a commented `DB_PATH=/data/ses-proxy.db` and the corrected `LOG_LEVEL` note (enumerates all six levels, states that it gates every call and that an invalid value aborts startup). `docker-compose.example.yml` gains `DB_PATH=${DB_PATH:-/data/ses-proxy.db}` and the same one-line `LOG_LEVEL` comment. Both defaults were read from `src/config.ts` rather than from the design, so they cannot drift from what `loadConfig` actually does.
+
+**Task 18.2.** README gains: `/metrics` in the API table; a paragraph on why `/health` and `/metrics` are unauthenticated (with a "do not route these publicly" warning that the design implies but does not state); a **Send response shape** section carrying the design §5.1 change as a call-out; `DB_PATH` and the corrected `LOG_LEVEL` in the configuration table; a note that config problems are reported all at once and exit 1; an **Observability** section (Prometheus scrape snippet, the eight series worth alerting on first from §4.7, the route-template/PII note, the full log field schema, redaction, the `/health` + `/metrics` access-log exclusion, and `npm start | npx pino-pretty` with the reason `pino-pretty` is not an image dependency); a **Development** section (all six npm scripts plus a paragraph on `test/golden/`); and an **Upgrading** section stating the drop-in guarantee and rollback-by-tag.
+
+Two edits beyond the plan's list, both corrections of text that the rewrite made false:
+- The **Database** section said "A cleanup job runs daily, deleting records older than 90 days." That is now the D2 defect described as a feature. Rewritten to name the three ephemeral tables and state that suppressions never expire, with the reputational reason and the `DELETE` endpoint as the only removal path.
+- The same section hardcoded `/data/ses-proxy.db`; it now mentions `DB_PATH`.
+
+**Task 18.3 — metrics: fully compliant, zero deviations.** Enumerated the live registry rather than reading the source: 27 application metrics, exactly matching design §4.1 (2) + §4.2 (7) + §4.3 (10) + §4.4 (2) + §4.5 (6) = 27. No extras, no gaps, every name/type/label set as specified. 27 default metrics registered, **none** carrying the `ghost_ses_proxy_` prefix (`process_cpu_seconds_total` etc. keep their conventional names).
+
+Label-value bounding was checked at each call site, not assumed:
+- `route` — Express template or the literal `unmatched`; the raw path never reaches a label, so the email address in `DELETE /v3/:domain/:type/:email` cannot leak. Confirmed empirically below.
+- `method` — Node's HTTP parser only accepts a fixed method set.
+- `error_type` — `toSesErrorType` allowlist, everything else `other`.
+- `ses_event_type` — the skip path passes only `Send`/`DeliveryDelay`; the unrecognized path passes the literal `other` (P10). Third-party JSON never reaches this label verbatim.
+- `type` on `suppressions_removed_total` — incremented **after** the `VALID_TYPES` guard in `src/routes/suppression.ts`, so it is bounded to three values even though it originates in a URL param. This is the one label whose safety depends on statement order, and it is worth not reordering.
+- `event_type`/`severity`, `reason`, `outcome`, `result`, `table`, `operation` — all internal enums.
+
+Buckets not pinned by the design (`ses_send_duration_seconds`, `sqs_poll_duration_seconds`, `event_lag_seconds`) were chosen in earlier phases and are exported constants; the two the design *does* pin (HTTP duration, send batch recipients) match §4.1/§4.2 exactly.
+
+**Task 18.4 — logging: compliant, one documented extra `component`.** Verified against a **real container-shaped run** (`node dist/index.js` with placeholder credentials, driven with curl) rather than only against the unit tests, because §3 is a claim about production output:
+- Every line is JSON on **stdout**; `err.log` was empty — nothing reaches stderr, including the `error`-level SQS failure line.
+- Every line carries `time` (ISO-8601), `level` as a **string**, `service`, `version`, `msg`.
+- `GET /health` and `GET /metrics` produced **no** access-log lines, while the three `/v3` and 404 requests did.
+- `route` was `/v3/:domain/events` on the routed request and `unmatched` on both the pre-routing 401 and the 404 — the design's accepted cost, visible in production output.
+- `customLogLevel` verified live: 200 → `info`, 401/404 → `warn`.
+- `reqId` on every HTTP line; the send path threads the same value into its own lines and into `ses-client`'s via the `context` argument.
+- No `console.log`/`warn`/`error` anywhere under `src/` (grep: zero hits), and no direct `process.stdout`/`stderr` writes.
+
+**Deviation accepted: `component: 'lifecycle'` is not in design §3's enum** (carried over from Phase 16 Deviation 3, which explicitly deferred the decision to this task). Keeping it, for two reasons. The enum's purpose is bounding a log *field* to a readable set, not forbidding a ninth value; and the alternative — folding startup/shutdown lines into `config` or `db` — would misfile them, since a `shutdown complete` line belongs to neither. It is emitted from `src/index.ts` (listen banner) and `src/shutdown.ts`, and it is documented in the README's field schema so an operator reading logs sees the real set. `component: 'events'` is in the design's enum but is **never emitted**: `src/routes/events.ts` is a pure read path with no log call. That is a permitted-but-unused value, not a gap — adding a log line purely to populate the enum would be writing to spec rather than to purpose.
+
+**Task 18.5 — pinned behavior holds.** Each item on the design's "what stays the same" list is asserted by `test/contract.test.ts` against `test/golden/captured/`, so this review is a check that the assertions exist and cover the list, not a re-derivation: HTTP bodies/status codes (`http-*.json`, 20 fixtures incl. health, all four suppression cases, all eight send scenarios), `buildRawMime` byte-for-byte under the §8.4 normalizers (8 `mime-*.txt`), `mapSesEvent` (11 `event-map-*.json`), `substituteVars` (`template-vars.json`), and `PRAGMA table_info` + `index_list` (`schema.json`). The base64 `{t, id}` cursor is pinned by `http-events-limit-3.json` → `http-events-page-2.json`, which is a genuine (un-normalized) assertion. `Dockerfile` has no `USER` directive, so the container still runs as root, and `mkdir -p /data` is preserved. D6 is still pinned: `scheduleCleanup` only registers a `setInterval` and never runs cleanup at startup — asserted by `test/cleanup.test.ts:349` ("D6 stays pinned: nothing runs at startup").
+
+All five defect fixes have **both** a unit regression and a contract-level `intent/` assertion:
+
+| Defect | Unit regression | Contract intent |
+|---|---|---|
+| D1 | `test/semaphore.test.ts` ×3 (rejects, throws synchronously, no wedge after `max` failures) + `test/routes/send-email.test.ts:535` | `intent/d1-semaphore-release.json` — partial-200 path and the all-throw failure shape |
+| D2 | `test/cleanup.test.ts` ×4, incl. the negative-series assertion | `intent/d2-suppression-retention.json` |
+| D3 | `test/db.test.ts:137` (id dedupe) + `test/sqs-poller.test.ts:614` (redelivery) | `intent/d3-redelivery-dedupe.json` |
+| D4 | `test/routes/events.test.ts:267` (repeated params) and `:334` (clamp) | `intent/d4-repeated-query-param.json`, `intent/d4-limit-clamp.json` |
+| D7 | `test/event-mapper.test.ts:370` + `test/sqs-poller.test.ts:539` | `intent/d7-malformed-payload.json` |
+
+**Task 18.6 — coverage.** 100% on all four axes, and per-file numbers were read from `coverage/coverage-final.json` rather than trusting the aggregate: **23 files, every one at 100% statements, branches and functions.** No module is hiding behind the aggregate. The only `exclude` entries are `src/index.ts` and `src/types.ts`, exactly as the design permits, and 23 + 2 = the 25 files in `src/`. No threshold was ever lowered and no test is skipped (`grep` for `.skip`/`.only`/`.todo` across `test/`: zero hits).
+
+**Flake root-caused and eliminated.** The first full-suite run of this phase failed 2 of 546 (`socket hang up` in `send-email.test.ts`, a 5 s timeout in `events.test.ts`) — the same signature Phase 16 recorded as an unexplained flake. Both files passed immediately when run in isolation. The cause was **mine, not the suite's**: the task 18.4 verification server (`node dist/index.js`, started with `&`) had survived its `kill -TERM %1` and was still running with a real SQS poller retrying against AWS with invalid credentials, competing for CPU and sockets with the forked test workers. After killing PID 28619, the suite passed **four consecutive full runs** (3 verification runs + the final gate), 546/546 each time. No test was modified, skipped, or given a longer timeout. Worth recording because Phase 16 saw the same signature and left it unexplained: if it recurs, look for a stray background process before suspecting the tests.
+
+**Notes for whoever picks this up next.**
+- `docker build` is now fully cached; a cold build takes noticeably longer than the ~0 s the final gate reported.
+- The AWS SDK's `NodeVersionSupportWarning` under `node:20-alpine` (SDK releases after early January 2027 will require node ≥22) is still the one real deadline against the image. Out of scope here, but it is a dated obligation, not a nit.
+- `README.md` is now the only operator-facing description of the metric and log schemas. A future metric added to `src/metrics.ts` without a README row will silently drift; the alerting table there is the natural place to keep them honest.
 
 ---
 
