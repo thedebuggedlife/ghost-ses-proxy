@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 12 complete
-> **Current phase:** Phase 13
+> **Status:** In progress — Phase 13 complete
+> **Current phase:** Phase 14
 
 ---
 
@@ -1087,7 +1087,7 @@ This phase deliberately carries one source file so there is context room to debu
 
 ### Tasks
 
-- [ ] **13.1** Implement the send route
+- [x] **13.1** Implement the send route
   - File: `src/routes/send-email.ts`
   - `createSendEmailRoute(deps: Deps): RequestHandler` — constructs **one** `Semaphore(config.sendConcurrency)` per app (not per request) and registers `collect()` callbacks so `send_in_flight` and `send_queue_depth` read the semaphore's `inFlight` and `queueDepth`. `send_in_flight` is the D1 canary from design §4.2.
   - Flow, preserving `lib/send-email.js` behavior: parse the form with `parseFormData` (Phase 8); normalize `to`/`o:tag` to arrays; 400 `{ message: 'Missing required fields: from, subject, to' }` when `from`, `subject`, or a non-empty `to` is absent; 400 `{ message: 'Invalid recipient-variables JSON' }` on a parse failure; build `batchMessageId` as `<uuid@domain>`; insert into `message_map`; collect `h:*` headers excluding the four reserved keys (`h:Reply-To`, `h:Sender`, `h:List-Unsubscribe`, `h:List-Unsubscribe-Post`); add `X-Ghost-Email-Id` when `v:email-id` is present.
@@ -1098,20 +1098,44 @@ This phase deliberately carries one source file so there is context room to debu
   - Metrics: `send_batches_total{outcome}` as `success`/`partial`/`failure`/`rejected` (`rejected` = the two 400 validation failures), `send_recipients_total{outcome}` as `sent`/`failed`, `send_batch_recipients` observed once per batch. The 500 returned when **multipart parsing itself** fails is deliberately not a `send_batches_total` outcome — it is a malformed client request, covered by `http_requests_total{status_code="500"}` (Design Decision P11).
   - Logs use `component: 'send'` and carry `reqId`, `batchId` (the id **without** angle brackets), `ghostEmailId`, `recipient`, `recipientCount`, `succeeded`, `failed` per design §3's field schema. Replace the `config.logLevel === 'debug'` check at `lib/send-email.js:248` with a plain `logger.debug(...)` — pino gates it now.
 
-- [ ] **13.2** Wire the route into the app
+- [x] **13.2** Wire the route into the app
   - File: `src/app.ts`
   - `app.post('/v3/:domain/messages', createSendEmailRoute(deps))`, registered in the same position as `server.js`.
 
-- [ ] **13.3** Test the send route end-to-end
+- [x] **13.3** Test the send route end-to-end
   - File: `test/routes/send-email.test.ts`
   - Supertest + `aws-sdk-client-mock` + `:memory:`. Per design Test Plan: happy path returns `{ id, message: 'Queued. Thank you.' }` and inserts one `message_map` row plus one `recipient_emails` row per recipient; per-recipient variable substitution differs per message (assert against the captured raw MIME); missing `from`/`subject`/`to` → 400 with `send_batches_total{outcome="rejected"}`; malformed `recipient-variables` → 400; **all recipients failing → 500 with `errors[]` and `outcome="failure"`**; **partial failure → 200 with `outcome="partial"`**; observed concurrency never exceeds `SEND_CONCURRENCY`; the `<%tag_unsubscribe_email%>` placeholder is stripped and stray commas cleaned; `X-Ghost-Email-Id` is added when `v:email-id` is present; the specified log fields and metrics are emitted.
   - **The D1 regression test:** force a throw *before* the SES call inside the per-recipient path for one of two recipients (e.g. stub `buildRawMime` to throw for one recipient only). Assert the batch completes as **`partial` with a 200** — not 500 — that the failing recipient appears in neither `recipient_emails` nor the success count, that `send_in_flight` returns to 0, and that a **subsequent** send request still succeeds. Under the old implementation the response would be a 500 and the second request would hang forever.
 
-- [ ] **13.4** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **13.4** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All four tasks done; the gate is green — `typecheck` clean, `build` emits `dist/routes/send-email.js` (still no `dist/src/`), `test:coverage` runs **414 tests across 19 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/routes/send-email.ts`, `test/routes/send-email.test.ts` (36 tests). **Modified:** `src/app.ts` (import + `app.post` at the Phase 12 marker), `src/multipart.ts` (see Deviation 1).
+
+**Deviation 1 — `parseFormData`'s parameter type widened from `express.Request` to `http.IncomingMessage`.** `RequestHandler<SendParams>` gives `req: Request<SendParams, …>`, which is **not** assignable to `Request<ParamsDictionary, …>` — `SendParams` has no string index signature, so `parseFormData(req)` was a TS2345. Widening to `IncomingMessage` (which `express.Request` extends, and which is all busboy needs: `headers` + `pipe`) fixes it without an `as unknown as` cast and without giving `SendParams` an index signature that would defeat the point of typing `:domain`. Type-only change; `test/multipart.test.ts` is untouched and still passes.
+
+**Deviation 2 — `req.params.domain || config.mailgunDomain` is dropped; the route uses `req.params.domain` directly.** `:domain` matches `[^/]+`, so an empty domain cannot reach the handler and the fallback is dead (same class as Phase 12's Deviation 2). The captured fixtures all use `example.com`, which equals `MAILGUN_DOMAIN` anyway, so no fixture can tell the two apart. If a future change registers this handler on a path without `:domain`, the fallback must come back.
+
+**Deviation 3 — a SES response with no `MessageId` is converted into an explicit `throw new Error('SES returned no MessageId')`.** `SendRawEmailResult.messageId` is `string | undefined` but `Db.insertRecipientEmail` requires a `string`. Legacy passed `undefined` straight into `better-sqlite3`, which throws `TypeError: can only bind…` — inside the `.then`, so it was already counted as a failed recipient. The explicit throw lands in the same per-recipient catch and produces the same outcome with a readable message. `?? ''` was rejected: it would silently write an empty-string primary key and report the recipient as *sent*.
+
+**The D1 fix has two halves and the test proves both.** `runExclusive` releases the slot but re-throws, so the per-recipient callback body carries its own `try/catch` converting **any** throw into `failed++` + an `errors[]` entry. The regression test mocks `src/mime` with `vi.hoisted` + `vi.mock`, delegating to the real `buildRawMime` except for recipients in a hoisted `Set` — that reproduces the genuine D1 path (a synchronous throw *before* the SES call, outside the SES promise chain) rather than an SES rejection, which the legacy code already handled. Asserted per `intent/d1-semaphore-release.json`: 200 + `partial` for the mixed batch, the failing recipient absent from `recipient_emails`, `send_in_flight` and `send_queue_depth` back to 0, two subsequent sends on the **same app instance** (so the same semaphore, `SEND_CONCURRENCY=2`) still returning 200, and the all-throw variant returning the 500 `Failed to send to all recipients` shape with `errors[]` populated from the thrown messages and zero SES calls.
+
+**The captured MIME fixtures reproduce byte-for-byte on the first attempt.** `test/routes/send-email.test.ts` drives the real HTTP route with the exact form fields from `captured/send-scenarios.json` and compares the SES stub's `rawMessage` against `captured/mime-{canonical-0,canonical-1,no-text-0,no-html-0,custom-headers-0,utf8-0}.txt` after inline boundary/UUID normalization. This validates the whole pipeline (busboy → `substituteVars` → placeholder stripping → `h:*` collection → `X-Ghost-Email-Id` → `buildRawMime`) end to end, including per-recipient divergence (alice vs bob differ in both base64 parts and in `List-Unsubscribe`). Phase 15 still owns the formal contract suite, but it now knows these assertions already hold.
+
+**The SES stub must return a unique `messageId` per call in any multi-recipient test.** `recipient_emails.ses_message_id` is the primary key and the insert is `INSERT OR IGNORE`, so the helper's default constant `STUB_SES_MESSAGE_ID` silently collapses N recipients into one row. Every multi-recipient test here sets `ses.respond = (_call, index) => ({ messageId: \`ses-message-${index}\` })`. Phase 15 will hit the same trap replaying the two-recipient canonical scenario.
+
+**`send_in_flight` / `send_queue_depth` are `collect()`-backed, set per `createSendEmailRoute` call.** The gauges read the semaphore live at scrape time, mirroring `attachDbGauges`. Consequence: calling `createApp(deps)` more than once against the same registry leaves the **last** app's semaphore wired to the gauges. Harmless in tests (each request goes through its own app) and in `index.ts` (one `createApp`), but the D1 assertions deliberately reuse a single app instance so the gauge and the semaphore under test are the same object.
+
+**Metric placement decisions.** `send_batch_recipients` is observed once, after validation passes and before the fan-out, so a `rejected` batch contributes no observation. Both 400s are `send_batches_total{outcome="rejected"}`. The 500 from a failed multipart parse — and from a failing `insertMessageMap` — increments **no** `send_batches_total` series (P11); both paths are covered by tests asserting `batchOutcomes()` is empty.
+
+**Notes for Phase 14.**
+- `src/app.ts` is now complete for `/v3`; Phase 16 only has to construct deps and listen.
+- `createApp` still installs **no** Express error handler. The send route's outer `try/catch` means it cannot reach one; the events and suppression routes still cannot either. Phase 16 should close this out explicitly rather than leaving it implicit.
+- The `uuid` package is used for the batch message id (`v4`), matching Phase 17.4's note to keep the dependency. `node:crypto`'s `randomUUID` was not substituted.
+- `vi.hoisted` + a delegating `vi.mock` factory is the pattern to reuse if Phase 14 needs to force a throw inside the poller's per-message path.
 
 ---
 

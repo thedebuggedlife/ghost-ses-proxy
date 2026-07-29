@@ -1,12 +1,12 @@
+import type { IncomingMessage } from 'node:http';
 import Busboy from 'busboy';
-import type { Request } from 'express';
 
 export type FormFields = Record<string, string | string[]>;
 
 /** Fields Ghost repeats; every other field keeps last-write-wins semantics. */
 export const ARRAY_FIELDS: ReadonlySet<string> = new Set(['to', 'o:tag']);
 
-export function parseFormData(req: Request): Promise<FormFields> {
+export function parseFormData(req: IncomingMessage): Promise<FormFields> {
   return new Promise<FormFields>((resolve, reject) => {
     const fields: FormFields = {};
     const arrayFields: Record<string, string[]> = {};

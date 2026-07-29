@@ -4,6 +4,7 @@ import { createHttpLogger, createHttpMetrics } from './middleware/observability'
 import { createEventsRoute } from './routes/events';
 import { createHealthRoute } from './routes/health';
 import { createMetricsRoute } from './routes/metrics';
+import { createSendEmailRoute } from './routes/send-email';
 import { createSuppressionRoute } from './routes/suppression';
 import type { Deps, Stats } from './types';
 
@@ -22,7 +23,7 @@ export function createApp(deps: AppDeps): Express {
 
   // --- /v3 routes, in `server.js` registration order ---
 
-  // POST /v3/:domain/messages is registered here (Phase 13)
+  app.post('/v3/:domain/messages', createSendEmailRoute(deps));
 
   app.get('/v3/:domain/events', createEventsRoute(deps));
   app.get('/v3/:domain/events/:pageToken', createEventsRoute(deps));
