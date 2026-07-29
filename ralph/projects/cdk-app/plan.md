@@ -440,6 +440,6 @@ Confirmed as designed:
 ### Modified Files
 | File | Phases | Changes |
 |------|--------|---------|
-| `.gitignore` | 0 | Add `cdk/.env`, `cdk/cdk.out/`, `cdk/cdk.context.json` |
+| `.gitignore` | 0 | Add `cdk/cdk.out/`, `cdk/cdk.context.json` (existing `.env` pattern already covers `cdk/.env`) |
 | `README.md` | 6 | "AWS infrastructure setup" section: CDK walkthrough (Option A) + moved console guide (Option B), Quick start pointer |
 | `.github/workflows/ci.yml` | 7 | Add PR-gating `cdk-test` job (design §9) |

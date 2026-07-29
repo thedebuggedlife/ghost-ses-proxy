@@ -7,12 +7,12 @@ import { GhostSesProxyStack } from '../lib/ghost-ses-proxy-stack.js';
 const BASE_ENV: Record<string, string> = { SES_DOMAIN: 'example.com' };
 const LOOKUP_ACCOUNT = '123456789012';
 
-export interface MakeTemplateOptions {
+interface MakeTemplateOptions {
   /** Pre-seed the app context with a Route53 hosted-zone lookup result. */
   readonly hostedZoneLookup?: boolean;
 }
 
-export function makeTemplate(
+function makeTemplate(
   envOverrides: Record<string, string> = {},
   options: MakeTemplateOptions = {},
 ): Template {

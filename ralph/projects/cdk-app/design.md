@@ -93,7 +93,7 @@ Validation rules in `parseConfig`:
 - If `HOSTED_ZONE_NAME` is set: `SES_DOMAIN` must equal it or end with `.<HOSTED_ZONE_NAME>`.
 - `parseConfig` never requires an account. Account resolution (`AWS_ACCOUNT_ID` ?? `CDK_DEFAULT_ACCOUNT`) is enforced in `bin/cdk-app.ts` when `HOSTED_ZONE_NAME` is set — `CDK_DEFAULT_ACCOUNT` exists only under the CDK CLI, and `generate-proxy-env.ts` reuses `parseConfig` outside it, so a parse-time account check would break `npm run generate-env` for every Route53 user.
 - Numeric vars parse as positive integers (`DLQ_MAX_RECEIVE_COUNT` ≥ 0); `SQS_RETENTION_DAYS` in 1–14; `SQS_VISIBILITY_TIMEOUT_SECONDS` in 0–43200.
-- `STACK_NAME` must match CloudFormation's constraint (`/^[A-Za-z][A-Za-z0-9-]*$/`) and be ≤ 50 chars so every derived name stays within AWS limits. The derived `<prefix>` is the stack name kebab-cased: split on case boundaries, lowercase, join with `-` (`GhostSesProxy` → `ghost-ses-proxy`, `MyBlog` → `my-blog`). Explicit `*_NAME`/secret-name vars always override the derived defaults.
+- `STACK_NAME` must match CloudFormation's constraint (`/^[A-Za-z][A-Za-z0-9-]*$/`) and be ≤ 50 chars. Additionally, the *resolved* resource names — derived or explicitly overridden — are validated against AWS length limits (queue ≤ 76 so `-dlq` fits SQS's 80, IAM user ≤ 64, config set ≤ 64, topic ≤ 256, secret name ≤ 512), since kebab-case expansion or an override could otherwise exceed them and fail only at deploy. The derived `<prefix>` is the stack name kebab-cased: split on case boundaries, lowercase, join with `-` (`GhostSesProxy` → `ghost-ses-proxy`, `MyBlog` → `my-blog`). Explicit `*_NAME`/secret-name vars always override the derived defaults.
 
 `cdk/.env.example` mirrors `.env.example`'s commented style, with only `SES_DOMAIN` uncommented.
 
@@ -226,7 +226,7 @@ Merge semantics (pure function `mergeEnvFile(existingLines: string[], managed: R
 
 - **Managed keys** — `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `SQS_QUEUE_URL`, `SES_CONFIGURATION_SET`, `MAILGUN_DOMAIN`: existing lines get their value replaced in place; missing keys are appended at the end.
 - **`PROXY_API_KEY`**: preserved if present; otherwise generated as `crypto.randomBytes(32).toString('hex')` and appended. (Removes another manual step — the user never invents a key.)
-- **Everything else** (comments, blank lines, `PORT`, `LOG_LEVEL`, unknown keys): passed through verbatim, order preserved.
+- **Everything else** (comments, blank lines, `PORT`, `LOG_LEVEL`, unknown keys): passed through unchanged, order preserved. (On write, line endings are normalized to LF and a single trailing newline is ensured — idempotent from the first rewrite on.)
 
 The script prints which keys were written/preserved but **never prints secret values**. Running it repeatedly is idempotent: same stack → same file (modulo a `PROXY_API_KEY` generated on first run and preserved after).
 
@@ -326,6 +326,7 @@ The existing `ci.yml` already runs on `pull_request` targeting `dev` — the new
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm, cache-dependency-path: cdk/package-lock.json }
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
       - run: npx cdk synth --quiet
         env: { SES_DOMAIN: example.com }

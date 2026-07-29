@@ -117,6 +117,24 @@ export function parseConfig(env: NodeJS.ProcessEnv): CdkAppConfig {
     errors,
   );
 
+  const sesConfigurationSet = optional(env, 'SES_CONFIGURATION_SET') ?? namePrefix;
+  const snsTopicName = optional(env, 'SNS_TOPIC_NAME') ?? `${namePrefix}-events`;
+  const sqsQueueName = optional(env, 'SQS_QUEUE_NAME') ?? `${namePrefix}-events`;
+  const iamUserName = optional(env, 'IAM_USER_NAME') ?? namePrefix;
+  const credentialsSecretName =
+    optional(env, 'CREDENTIALS_SECRET_NAME') ?? `${namePrefix}/credentials`;
+
+  const checkLength = (label: string, value: string, max: number, why: string) => {
+    if (value.length > max) {
+      errors.push(`${label} ("${value}") must be at most ${max} characters (${why})`);
+    }
+  };
+  checkLength('SQS_QUEUE_NAME', sqsQueueName, 76, 'the "-dlq" suffix must fit SQS’s 80-char limit');
+  checkLength('IAM_USER_NAME', iamUserName, 64, 'IAM user name limit');
+  checkLength('SES_CONFIGURATION_SET', sesConfigurationSet, 64, 'SES configuration set name limit');
+  checkLength('SNS_TOPIC_NAME', snsTopicName, 256, 'SNS topic name limit');
+  checkLength('CREDENTIALS_SECRET_NAME', credentialsSecretName, 512, 'Secrets Manager name limit');
+
   if (errors.length > 0) {
     throw new Error(
       `Invalid CDK configuration (see cdk/.env.example):\n${errors.map((e) => `  - ${e}`).join('\n')}`,
@@ -129,11 +147,11 @@ export function parseConfig(env: NodeJS.ProcessEnv): CdkAppConfig {
     awsAccountId: optional(env, 'AWS_ACCOUNT_ID'),
     hostedZoneName,
     stackName,
-    sesConfigurationSet: optional(env, 'SES_CONFIGURATION_SET') ?? namePrefix,
-    snsTopicName: optional(env, 'SNS_TOPIC_NAME') ?? `${namePrefix}-events`,
-    sqsQueueName: optional(env, 'SQS_QUEUE_NAME') ?? `${namePrefix}-events`,
-    iamUserName: optional(env, 'IAM_USER_NAME') ?? namePrefix,
-    credentialsSecretName: optional(env, 'CREDENTIALS_SECRET_NAME') ?? `${namePrefix}/credentials`,
+    sesConfigurationSet,
+    snsTopicName,
+    sqsQueueName,
+    iamUserName,
+    credentialsSecretName,
     accessKeySerial,
     sqsRetentionDays,
     sqsVisibilityTimeoutSeconds,

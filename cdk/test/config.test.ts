@@ -214,4 +214,33 @@ describe('parseConfig', () => {
       );
     });
   });
+
+  describe('resolved name length limits', () => {
+    it('rejects a derived queue name that would push the DLQ past the SQS limit', () => {
+      expect(() => parseConfig({ ...minimal, STACK_NAME: 'Ab'.repeat(25) })).toThrow(
+        /SQS_QUEUE_NAME/,
+      );
+    });
+
+    it('rejects an overridden queue name longer than 76 characters', () => {
+      expect(() => parseConfig({ ...minimal, SQS_QUEUE_NAME: 'q'.repeat(77) })).toThrow(
+        /SQS_QUEUE_NAME/,
+      );
+      expect(parseConfig({ ...minimal, SQS_QUEUE_NAME: 'q'.repeat(76) }).sqsQueueName).toHaveLength(
+        76,
+      );
+    });
+
+    it('rejects an IAM user name longer than 64 characters', () => {
+      expect(() => parseConfig({ ...minimal, IAM_USER_NAME: 'u'.repeat(65) })).toThrow(
+        /IAM_USER_NAME/,
+      );
+    });
+
+    it('rejects a configuration set name longer than 64 characters', () => {
+      expect(() => parseConfig({ ...minimal, SES_CONFIGURATION_SET: 'c'.repeat(65) })).toThrow(
+        /SES_CONFIGURATION_SET/,
+      );
+    });
+  });
 });

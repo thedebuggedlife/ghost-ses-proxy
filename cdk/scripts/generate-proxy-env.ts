@@ -162,7 +162,7 @@ async function fetchCredentials(
 
 export async function main(argv: string[]): Promise<void> {
   const { out } = parseArgs(argv);
-  loadDotenv();
+  loadDotenv({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
   const config = parseConfig(process.env);
   const outPath = out === undefined ? defaultOutPath() : resolve(process.cwd(), out);
 
@@ -186,7 +186,9 @@ export async function main(argv: string[]): Promise<void> {
   chmodSync(outPath, 0o600);
 
   console.log(`Wrote ${outPath} (mode 0600)`);
-  console.log(`  set from stack "${config.stackName}": ${MANAGED_KEYS.join(', ')}`);
+  console.log(
+    `  updated: ${MANAGED_KEYS.join(', ')} (AWS_REGION from cdk/.env; rest from stack "${config.stackName}")`,
+  );
   console.log(`  ${PROXY_API_KEY}: ${apiKeyPreserved ? 'preserved' : 'generated'}`);
 }
 
