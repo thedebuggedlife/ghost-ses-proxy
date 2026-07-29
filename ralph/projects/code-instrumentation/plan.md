@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 3 complete
-> **Current phase:** Phase 4
+> **Status:** In progress — Phase 4 complete
+> **Current phase:** Phase 5
 
 ---
 
@@ -503,7 +503,7 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
   - File: `test/logger.test.ts`
   - Write to an in-memory stream and assert parsed JSON: `level` is a **string** not pino's numeric default; `time` is ISO-8601; `service` and `version` on every line; `LOG_LEVEL=warn` suppresses `info` and below; an `authorization` header under `req.headers` is redacted; `logger.child({ component: 'send' })` bindings appear on child lines.
 
-- [ ] **4.3** Implement the metrics catalog
+- [x] **4.3** Implement the metrics catalog
   - File: `src/metrics.ts`
   - `createMetrics(register: Registry): Metrics` — **never** touch prom-client's default global registry (design §4: per-test registries eliminate the "already registered" flake class).
   - Call `collectDefaultMetrics({ register })` with **no prefix**, so `process_cpu_seconds_total` and `nodejs_eventloop_lag_seconds` keep conventional names. Only application metrics carry `ghost_ses_proxy_`.
@@ -512,12 +512,12 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
   - Export the SES `error_type` allowlist here so `ses-client.ts` (Phase 9) and the tests share one source: `Throttling`, `MessageRejected`, `MailFromDomainNotVerifiedException`, `ConfigurationSetDoesNotExistException`, `AccountSendingPausedException`, `LimitExceededException`, `TimeoutError`, everything else → `other`.
   - Set `build_info` to 1 with `version` and `node_version` labels at construction.
 
-- [ ] **4.4** Test the metrics catalog
+- [x] **4.4** Test the metrics catalog
   - File: `test/metrics.test.ts`
   - Every metric registers with the expected name, type, and label names (assert via `register.getMetricsAsJSON()`); default metrics are present and **unprefixed**; `build_info` is 1 and carries the version label; two `createMetrics` calls on two separate `new Registry()` instances do not collide.
   - Assert the full catalog by name against a literal list — this test is the guard that a later phase does not quietly drop a metric.
 
-- [ ] **4.5** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **4.5** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
@@ -525,6 +525,25 @@ Design §1 and plan task 3.4 both pin `module: commonjs` + `moduleResolution: no
 - Iteration 6 left `src/logger.ts`, `src/metrics.ts`, and `test/logger.test.ts` on disk, uncommitted. The coordinator verified this partial work rather than discarding it: `npx tsc --noEmit` exits 0, and `npx vitest run test/logger.test.ts` passes **13/13**. On that evidence **4.1 and 4.2 are ticked** and the work committed as a restore point.
 - **4.3 is deliberately left unchecked even though `src/metrics.ts` exists and typechecks.** Nothing has yet proven it registers the full 26-metric catalog with the right names, types, and label sets — that is exactly what 4.4's test establishes. The next iteration must **read the existing `src/metrics.ts` and verify it against design §4.1–§4.5 before trusting it**, correcting any gaps, then write `test/metrics.test.ts` and run the 4.5 gate.
 - No work was lost and no reset was needed; `git reset --hard` would not have removed these files anyway, since they were untracked.
+
+**Completed 2026-07-28 (iteration 7).** 4.3–4.5 finished; the gate is green — `typecheck` clean, `build` emits `dist/{config,logger,metrics,types}.js` (no `dist/src/`), `test:coverage` runs **86 tests across 3 files** at **100% statements / branches / functions / lines**.
+
+**4.3 — the inherited `src/metrics.ts` was audited line-by-line against design §4.1–§4.5 and needed no correction.** All 27 application metrics are present with the design's exact names, types, and label sets (HTTP 2, send 7, SQS/events 10, suppressions 2, database/build 6); `collectDefaultMetrics({ register })` is called with no prefix; `build_info` is set to 1 with `version` + `node_version` at construction; the `SES_ERROR_TYPES` allowlist is exported for Phase 9. Note the count is **27**, not the "26 entries" the Phase 3 observation guessed — recount before trusting that number anywhere else.
+
+**Bucket sets beyond the plan's two.** The plan pins only `HTTP_DURATION_BUCKETS` and `SEND_BATCH_RECIPIENT_BUCKETS`. `src/metrics.ts` also exports `SES_SEND_DURATION_BUCKETS`, `SQS_POLL_DURATION_BUCKETS`, and `EVENT_LAG_BUCKETS`, which the design does not specify; they were left as inherited (chosen sensibly — the SQS poll histogram tops out at 30s to bracket the 20s long poll, and `event_lag_seconds` runs 1s→1d). The test asserts only the two the design pins, so a later phase can retune the other three without a test edit.
+
+**Files added.** `test/metrics.test.ts` (45 tests). No source file was modified this iteration.
+
+**How `test/metrics.test.ts` guards the catalog (4.4).** A literal `CATALOG` array of 27 `{property, name, type, labelNames}` entries drives an `it.each`, and a companion test asserts the registry's `ghost_ses_proxy_*` name set **equals** that list — so both dropping a metric and silently adding an unlisted one fail. Each entry also asserts the `Metrics` object property points at the metric of that name, which is what ties the camelCase DI surface to the wire names.
+
+**Two runtime fields prom-client does not type.** `labelNames` (all metrics) and `upperBounds` (histograms) exist on the instances but are absent from `index.d.ts`, so the test reads them through a narrow `MetricInternals` cast obtained via `register.getSingleMetric(name)`. Verified against prom-client 15.1.3. The alternative — inferring label names from `getMetricsAsJSON()` — cannot work for a counter with no observations (`values: []`) and would force the test to fabricate observations just to read the schema.
+
+**`register` is not mutated globally.** A test asserts prom-client's default global registry holds no `ghost_ses_proxy_*` metric after `createMetrics`, which is the direct guard for design §4's "per-test registries eliminate the already-registered flake class".
+
+**Notes for later phases.**
+- `getVersion()` in `src/logger.ts` takes an optional `load?: (id: string) => unknown` injection point (a Phase 4.1 deviation from the design sketch) so the `'unknown'` fallback branch is testable. Production and `metrics.ts` both call it with no argument.
+- `collectDefaultMetrics` is invoked once per `createMetrics` call. Its event-loop-lag monitor `unref()`s its timer, so per-test registries do not hold the Vitest process open — confirmed across 45 constructions in one file.
+- Phase 15's contract test and the Phase 10 send path should draw `error_type` from `toSesErrorType`, never from a raw `err.name`.
 
 ---
 
