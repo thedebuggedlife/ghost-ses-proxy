@@ -1,8 +1,10 @@
 import express, { type Express } from 'express';
 import { createAuthMiddleware } from './middleware/auth';
 import { createHttpLogger, createHttpMetrics } from './middleware/observability';
+import { createEventsRoute } from './routes/events';
 import { createHealthRoute } from './routes/health';
 import { createMetricsRoute } from './routes/metrics';
+import { createSuppressionRoute } from './routes/suppression';
 import type { Deps, Stats } from './types';
 
 export type AppDeps = Deps & { stats: Stats };
@@ -18,7 +20,14 @@ export function createApp(deps: AppDeps): Express {
 
   app.use('/v3', createAuthMiddleware(deps.config));
 
-  // --- /v3 routes are registered here (Phases 12 and 13) ---
+  // --- /v3 routes, in `server.js` registration order ---
+
+  // POST /v3/:domain/messages is registered here (Phase 13)
+
+  app.get('/v3/:domain/events', createEventsRoute(deps));
+  app.get('/v3/:domain/events/:pageToken', createEventsRoute(deps));
+
+  app.delete('/v3/:domain/:type/:email', createSuppressionRoute(deps));
 
   return app;
 }

@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 11 complete
-> **Current phase:** Phase 12
+> **Status:** In progress — Phase 12 complete
+> **Current phase:** Phase 13
 
 ---
 
@@ -1017,17 +1017,17 @@ Express's `res.send()` re-sets the header through `setCharset()` for a string bo
 
 ### Tasks
 
-- [ ] **12.1** Port the suppression route
+- [x] **12.1** Port the suppression route
   - File: `src/routes/suppression.ts`
   - `createSuppressionRoute(deps)` — direct port of `lib/suppression-api.js`. Preserve the `VALID_TYPES` set (`bounces`, `complaints`, `unsubscribes`), the 404 body `{ message: 'Unknown suppression type: <type>' }`, the 200 body `{ message: 'Address has been removed', value: '', address: <email> }`, and the fact that deleting a non-existent address still returns 200.
   - Keep the `decodeURIComponent(req.params.email)` call exactly as-is even though Express has already decoded the param — preserving it preserves current behavior for edge cases like `%2540`. Do not add a try/catch that Express did not have.
   - Increment `suppressions_removed_total{type}` and log at `info` with `component: 'suppression'` and `recipient`.
 
-- [ ] **12.2** Test the suppression route
+- [x] **12.2** Test the suppression route
   - File: `test/routes/suppression.test.ts`
   - A valid type deletes the row and returns the Mailgun body; an unknown type → 404 with the exact message; URL-encoded `+` and `%40` in the address resolve to the right stored address; deleting a non-existent address still returns 200; `suppressions_removed_total{type}` increments.
 
-- [ ] **12.3** Port the events route with the D4 fix
+- [x] **12.3** Port the events route with the D4 fix
   - File: `src/routes/events.ts`
   - Direct port of `lib/events-api.js` — same dynamic SQL, same keyset pagination, same base64 `{t, id}` cursor format, same Mailgun item shape (`severity` and `delivery-status` present only when non-null), same `paging` object with `next` built from `x-forwarded-proto` and `host`.
   - **D4 fix** (design §5.4). Express parses `?event=a&event=b` into an **array**, so today's `.split(' OR ')` is `undefined` → `TypeError` → 500. Add:
@@ -1040,19 +1040,42 @@ Express's `res.send()` re-sets the header through `setCharset()` for a string bo
   - Clamp `limit` to `[1, 1000]` (it is currently honored unbounded).
   - Everything else in the response — item shape, `paging` structure, cursor encoding, filter semantics for well-formed input — is golden-eligible and must not change.
 
-- [ ] **12.4** Test the events route
+- [x] **12.4** Test the events route
   - File: `test/routes/events.test.ts`
   - Against a seeded `:memory:` database: returns Mailgun-shaped `items` and `paging`; `event=a OR b` filters; `tags=x AND y` filters; `begin`/`end` bound the range; keyset pagination produces a working `next` cursor and the second page continues correctly with no duplicates; an invalid page token → 400; **`?event=a&event=b` returns 200 honoring the first value rather than 500** (D4 regression); **`limit=99999999` clamps to 1000** and `limit=0` clamps to 1 (D4 regression); repeated `?begin=`/`?limit=` take the first value; `severity` and `delivery-status` appear only when the underlying columns are non-null.
 
-- [ ] **12.5** Wire both routes into the app
+- [x] **12.5** Wire both routes into the app
   - File: `src/app.ts`
   - `app.get('/v3/:domain/events', …)`, `app.get('/v3/:domain/events/:pageToken', …)`, `app.delete('/v3/:domain/:type/:email', …)` — same paths and same registration order as `server.js`.
 
-- [ ] **12.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **12.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/routes/{events,suppression}.js` (still no `dist/src/`), `test:coverage` runs **378 tests across 18 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/routes/suppression.ts`, `src/routes/events.ts`, `test/routes/suppression.test.ts` (12 tests), `test/routes/events.test.ts` (37 tests). **Modified:** `src/app.ts` (two imports + the three route registrations at the marker).
+
+**Route registration order matches `server.js` exactly** — a `// POST /v3/:domain/messages is registered here (Phase 13)` comment now sits above the two `events` GETs, so Phase 13 must insert there rather than appending after the suppression DELETE. Order matters: `DELETE /v3/:domain/:type/:email` is a three-segment wildcard that would shadow nothing today, but keeping the file in `server.js` order removes the question entirely.
+
+**`firstString` and `clampLimit` are exported from `src/routes/events.ts`** and unit-tested directly alongside the supertest cases. Phase 15's contract test can import them if it needs to assert the coercion without an HTTP round trip.
+
+**Deviation 1 — `limit` parsing is `parseInt` → NaN-check → clamp, not `parseInt(...) || 300` → clamp.** The intent fixture pins two cases that a naive clamp collapses: `?limit=abc` must stay **300** (NaN → default, no clamp) while `?limit=0` must become **1** (parses fine → clamped up). Chaining `|| 300` before the clamp turns `limit=0` into 300; clamping before the NaN check turns `limit=abc` into 1. Both fixture cases are asserted.
+
+**Deviation 2 — the legacy `if (conditions.length > 0)` guard around the `WHERE` clause is dropped as dead code.** `timestamp >= ?` and `timestamp <= ?` are pushed unconditionally, so `conditions` is never empty and the emitted SQL is byte-identical either way. Keeping the branch cost the phase its 100% branch coverage for a path no request can reach. Note this if a future change makes the range bounds conditional.
+
+**Deviation 3 — `paging.next` interpolates `req.headers.host` with no `?? ''` fallback.** An `?? ''` guard reads safer but diverges from `lib/events-api.js`, which string-concatenates the raw header and yields the literal `http://undefined/...` when `Host` is absent. HTTP/1.1 requires the header, so the case is unreachable over a real socket; matching the legacy output exactly is worth more than a guard against an impossible input, and it keeps the branch count honest.
+
+**`firstString` is applied to `x-forwarded-proto` as well as to the four query params.** Node types the header as `string | undefined`, but a proxy chain can legitimately send it twice; the same coercion keeps the first value rather than producing `https, http` in the cursor URL.
+
+**Suppression route details.** `VALID_TYPES` is a `ReadonlySet<string>` seeded from the `SuppressionType` union rather than the legacy object-literal lookup, so a prototype key (`constructor`, `__proto__`) cannot pass validation — a latent hole in `lib/suppression-api.js`'s `VALID_TYPES[type]` check that no fixture exercises. The 404 body, the 200 body, and the return-200-for-an-unknown-address behavior are unchanged. `suppressions_removed_total{type}` is incremented only on the valid-type path (asserted); `decodeURIComponent(req.params.email)` is kept with no try/catch, and a test pins that a double-encoded `%252B`/`%2540` address resolves through both decodes.
+
+**Events tests seed from `test/golden/captured/events-seed.json`** via a typed JSON import (dev `tsconfig` has `resolveJsonModule`; the build config does not, and `src/` imports no JSON). Both D4 intent fixtures name `test/routes/events.test.ts` as an asserter, and every one of their nine cases is covered here with the fixture's exact expected `itemIds` and `pagingNext`. `Host` is pinned to `localhost:3003` on every request (Design Decision P8) so the two `pagingNext` cursor URLs reproduce verbatim.
+
+**Notes for Phase 13.**
+- Insert `app.post('/v3/:domain/messages', createSendEmailRoute(deps))` at the marked comment in `src/app.ts`, above the events routes.
+- `createApp` still installs **no** error handler (Phase 11's open question). Neither route added here can reach it: the events route's only throw path is `decodeURIComponent`-free and the suppression route's `decodeURIComponent` throw is the one deliberate exception. Phase 13 or 16 should still decide.
+- `test/routes/events.test.ts` exports nothing, but its `get()`/`ids()` helpers and the `EventsBody` interface are a usable template for Phase 15's HTTP contract assertions.
 
 ---
 
