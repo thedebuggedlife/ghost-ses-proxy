@@ -1,0 +1,17 @@
+[
+  {
+    "event_type": "clicked",
+    "severity": null,
+    "recipient": "frank@example.com",
+    "timestamp": 1784548812,
+    "ses_message_id": "010001912a3b4c5d-0000000000000007-000000",
+    "ghost_email_id": "650000000000000000000009",
+    "batch_message_id": "<BATCH_UUID>@example.com",
+    "delivery_status_code": null,
+    "delivery_status_message": null,
+    "delivery_status_enhanced": "",
+    "is_suppression": false,
+    "suppression_type": null,
+    "suppression_reason": null
+  }
+]

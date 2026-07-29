@@ -1,0 +1,15 @@
+From: newsletter@example.com
+To: alice@example.com
+Subject: HTML only
+Message-ID: <<BATCH_UUID>@example.com>
+X-Ghost-Email-Id: 650000000000000000000002
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_<BOUNDARY>"
+
+------=_Part_<BOUNDARY>
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+SFRNTCBvbmx5PC9wPjwvYm9keT48L2h0bWw+
+
+------=_Part_<BOUNDARY>--

@@ -1,0 +1,112 @@
+{
+  "canonical": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "Example Newsletter <newsletter@example.com>",
+      "subject": "Weekly digest",
+      "to": [
+        "alice@example.com",
+        "bob@example.com"
+      ],
+      "html": "<html><body><p>Hello %recipient.name%!</p><p><a href=\"%recipient.unsubscribe_url%\">Unsubscribe</a></p></body></html>",
+      "text": "Hello %recipient.name%!\r\nUnsubscribe: %recipient.unsubscribe_url%",
+      "recipient-variables": "{\"alice@example.com\":{\"name\":\"Alice\",\"unsubscribe_url\":\"https://example.com/unsubscribe/alice\"},\"bob@example.com\":{\"name\":\"Bob\",\"unsubscribe_url\":\"https://example.com/unsubscribe/bob\"}}",
+      "o:tag": [
+        "bulk-email",
+        "ghost-email"
+      ],
+      "v:email-id": "650000000000000000000001",
+      "h:List-Unsubscribe": "<%recipient.unsubscribe_url%>, <%tag_unsubscribe_email%>",
+      "h:List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    }
+  },
+  "no-text": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "newsletter@example.com",
+      "subject": "HTML only",
+      "to": [
+        "alice@example.com"
+      ],
+      "html": "<html><body><p>HTML only</p></body></html>",
+      "v:email-id": "650000000000000000000002"
+    }
+  },
+  "no-html": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "newsletter@example.com",
+      "subject": "Text only",
+      "to": [
+        "alice@example.com"
+      ],
+      "text": "Text only",
+      "v:email-id": "650000000000000000000003"
+    }
+  },
+  "custom-headers": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "newsletter@example.com",
+      "subject": "Custom headers",
+      "to": [
+        "alice@example.com"
+      ],
+      "html": "<html><body><p>Custom headers</p></body></html>",
+      "text": "Custom headers",
+      "h:Reply-To": "reply@example.com",
+      "h:Sender": "sender@example.com",
+      "h:X-Foo": "foo-value",
+      "h:X-Bar": "bar-value",
+      "v:email-id": "650000000000000000000004"
+    }
+  },
+  "utf8": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "Résumé <newsletter@example.com>",
+      "subject": "Résumé — 日本語 ✉️",
+      "to": [
+        "alice@example.com"
+      ],
+      "html": "<html><body><p>Grüße — 日本語 ✉️</p></body></html>",
+      "text": "Grüße — 日本語 ✉️",
+      "v:email-id": "650000000000000000000005"
+    }
+  },
+  "missing-from": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "subject": "No from field",
+      "to": [
+        "alice@example.com"
+      ],
+      "text": "No from field"
+    }
+  },
+  "malformed-recipient-variables": {
+    "sesBehaviour": "ok",
+    "fields": {
+      "from": "newsletter@example.com",
+      "subject": "Bad vars",
+      "to": [
+        "alice@example.com"
+      ],
+      "text": "Bad vars",
+      "recipient-variables": "{not valid json"
+    }
+  },
+  "all-recipients-fail": {
+    "sesBehaviour": "fail",
+    "fields": {
+      "from": "newsletter@example.com",
+      "subject": "Everything fails",
+      "to": [
+        "alice@example.com",
+        "bob@example.com"
+      ],
+      "text": "Everything fails",
+      "v:email-id": "650000000000000000000006"
+    }
+  }
+}

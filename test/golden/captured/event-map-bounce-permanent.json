@@ -1,0 +1,17 @@
+[
+  {
+    "event_type": "failed",
+    "severity": "permanent",
+    "recipient": "carol@example.com",
+    "timestamp": 1784548807,
+    "ses_message_id": "010001912a3b4c5d-0000000000000003-000000",
+    "ghost_email_id": "650000000000000000000009",
+    "batch_message_id": "<BATCH_UUID>@example.com",
+    "delivery_status_code": 607,
+    "delivery_status_message": "Not delivering to previously bounced address",
+    "delivery_status_enhanced": "smtp; 550 5.1.1 user unknown",
+    "is_suppression": true,
+    "suppression_type": "bounces",
+    "suppression_reason": "Permanent bounce"
+  }
+]

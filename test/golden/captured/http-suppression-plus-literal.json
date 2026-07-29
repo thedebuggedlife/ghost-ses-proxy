@@ -1,0 +1,13 @@
+{
+  "_request": {
+    "method": "DELETE",
+    "path": "/v3/example.com/bounces/bounced+tag%40example.com",
+    "auth": true
+  },
+  "status": 200,
+  "body": {
+    "message": "Address has been removed",
+    "value": "",
+    "address": "bounced+tag@example.com"
+  }
+}

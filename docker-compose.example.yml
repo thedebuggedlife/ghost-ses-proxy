@@ -15,6 +15,8 @@ services:
       - SES_CONFIGURATION_SET=${SES_CONFIGURATION_SET:-ghost-ses-proxy}
       - PROXY_API_KEY=${PROXY_API_KEY}
       - MAILGUN_DOMAIN=${MAILGUN_DOMAIN}
+      # trace|debug|info|warn|error|fatal — an invalid value aborts startup
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - SEND_CONCURRENCY=${SEND_CONCURRENCY:-10}
+      - DB_PATH=${DB_PATH:-/data/ses-proxy.db}
     restart: unless-stopped

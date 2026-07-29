@@ -1,0 +1,11 @@
+{
+  "_request": {
+    "method": "GET",
+    "path": "/v3/example.com/events/invalid-page-token",
+    "auth": true
+  },
+  "status": 400,
+  "body": {
+    "message": "Invalid page token"
+  }
+}

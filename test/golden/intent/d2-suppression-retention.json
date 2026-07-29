@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "defect": "D2",
+    "designSection": "§5.2",
+    "kind": "intent",
+    "note": "Retention cleanup must purge the three ephemeral correlation tables at 90 days and must NEVER touch suppressions. Permanent bounces and spam complaints expiring means re-mailing addresses that hard-bounced, which is exactly what degrades SES sending reputation.",
+    "currentBehavior": "lib/db.js:102 runs DELETE FROM suppressions WHERE created_at < datetime('now', '-90 days') alongside the other three tables, so every suppression silently lapses after 90 days.",
+    "assertedBy": "test/contract.test.ts and test/cleanup.test.ts"
+  },
+
+  "seed": {
+    "note": "created_at is backdated with SQLite datetime('now', '-N days'). One row per (table, age) pair.",
+    "rows": [
+      { "table": "message_map",      "ageDays": 200, "key": { "batch_message_id": "<old-batch@example.com>" } },
+      { "table": "message_map",      "ageDays": 30,  "key": { "batch_message_id": "<new-batch@example.com>" } },
+      { "table": "recipient_emails", "ageDays": 200, "key": { "ses_message_id": "010001912a3b4c5d-0000000000000010-000000" } },
+      { "table": "recipient_emails", "ageDays": 30,  "key": { "ses_message_id": "010001912a3b4c5d-0000000000000011-000000" } },
+      { "table": "events",           "ageDays": 200, "key": { "id": "evt-old-0001" } },
+      { "table": "events",           "ageDays": 30,  "key": { "id": "evt-new-0001" } },
+      { "table": "suppressions",     "ageDays": 200, "key": { "email": "ancient-bounce@example.com", "type": "bounces" } },
+      { "table": "suppressions",     "ageDays": 30,  "key": { "email": "recent-complaint@example.com", "type": "complaints" } }
+    ]
+  },
+
+  "expected": {
+    "afterRunCleanup": {
+      "message_map":      { "deleted": ["<old-batch@example.com>"], "survives": ["<new-batch@example.com>"] },
+      "recipient_emails": { "deleted": ["010001912a3b4c5d-0000000000000010-000000"], "survives": ["010001912a3b4c5d-0000000000000011-000000"] },
+      "events":           { "deleted": ["evt-old-0001"], "survives": ["evt-new-0001"] },
+      "suppressions":     { "deleted": [], "survives": ["ancient-bounce@example.com", "recent-complaint@example.com"] }
+    },
+    "suppressionsRowCountIsUnchanged": true,
+    "metrics": {
+      "ghost_ses_proxy_db_cleanup_runs_total{outcome=\"success\"}": 1,
+      "ghost_ses_proxy_db_cleanup_deleted_rows_total{table=\"message_map\"}": 1,
+      "ghost_ses_proxy_db_cleanup_deleted_rows_total{table=\"recipient_emails\"}": 1,
+      "ghost_ses_proxy_db_cleanup_deleted_rows_total{table=\"events\"}": 1,
+      "ghost_ses_proxy_db_cleanup_deleted_rows_total{table=\"suppressions\"}": "must never be observed — suppressions is not a cleanup target, so no series with this label may exist"
+    },
+    "onlySupportedRemovalPath": "DELETE /v3/:domain/:type/:email"
+  }
+}

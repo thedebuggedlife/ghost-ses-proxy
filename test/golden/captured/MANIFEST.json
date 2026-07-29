@@ -1,0 +1,204 @@
+{
+  "capturedFromSha": "36845e99ea56e150f7a7d2d09dd7536b9b6bf3bb",
+  "capturedAt": "2026-07-27",
+  "harness": "scripts/capture-golden.cjs",
+  "harnessImage": "scripts/Dockerfile.capture",
+  "normalizers": "scripts/normalize.cjs",
+  "dependencyVersions": {
+    "node": "v20.20.2",
+    "express": "4.22.2",
+    "busboy": "1.6.0",
+    "uuid": "11.1.1",
+    "better-sqlite3": "11.10.0",
+    "@aws-sdk/client-ses": "3.1096.0",
+    "@aws-sdk/client-sqs": "3.1096.0",
+    "aws-sdk-client-mock": "4.1.0"
+  },
+  "reproducibilityCaveat": "scripts/Dockerfile.capture installs from the semver ranges in package.json with no lockfile — package-lock.json does not exist until Phase 3 — so `git checkout 36845e99ea56e150f7a7d2d09dd7536b9b6bf3bb && docker build -f scripts/Dockerfile.capture . && docker run ...` resolves whatever satisfies those ranges at the time it is run, not necessarily the versions recorded in dependencyVersions. The versions above are the resolved set the capture actually ran against; pin them if an exact regeneration is ever required. Note also that MANIFEST.json is written by hand and is not produced by the harness, so it is expected to be the only extra file when diffing a fresh capture against test/golden/captured.",
+  "roles": {
+    "input": "Written by the harness as the exact input it fed the legacy implementation. Recorded RAW (not normalized) so it can be replayed verbatim; see Phase 0 Observations, Deviation 1.",
+    "output": "Recorded from the legacy implementation and normalized per scripts/normalize.cjs before writing. These are the assertions."
+  },
+  "files": {
+    "event-map-bounce-permanent.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-bounce-transient.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-click.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-complaint.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-delivery-delay.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-delivery-multi-recipient.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-delivery.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-open.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-reject.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-send.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "event-map-unknown-type.json": {
+      "anchoredBy": "Internal event-mapper contract feeding the events API",
+      "role": "output"
+    },
+    "events-seed.json": {
+      "anchoredBy": "Database seed replayed by test/contract.test.ts — the fixed row ids are what make paging.next reproducible",
+      "role": "input"
+    },
+    "http-events-filter-event.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-filter-tags.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-invalid-token.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-limit-3.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-page-2.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-range.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-events-unfiltered.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-health.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-all-recipients-fail.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-canonical.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-custom-headers.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-malformed-recipient-variables.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-missing-from.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-no-html.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-no-text.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-send-utf8.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-suppression-bounces-encoded.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-suppression-complaints.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-suppression-plus-literal.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "http-suppression-unknown-type.json": {
+      "anchoredBy": "Ghost mailgun.js — response body and status code",
+      "role": "output"
+    },
+    "mime-all-recipients-fail-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-all-recipients-fail-1.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-canonical-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-canonical-1.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-custom-headers-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-no-html-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-no-text-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "mime-utf8-0.txt": {
+      "anchoredBy": "SES raw message format (SendRawEmail)",
+      "role": "output"
+    },
+    "schema.json": {
+      "anchoredBy": "The existing /data volume — the new build must open it unchanged",
+      "role": "output"
+    },
+    "send-scenarios.json": {
+      "anchoredBy": "Ghost mailgun.js form encoding — the replay input for every http-send-*.json and mime-*.txt",
+      "role": "input"
+    },
+    "ses-event-inputs.json": {
+      "anchoredBy": "SES/SNS notification payload shape — the replay input for test/helpers/fixtures.ts and every event-map-*.json output",
+      "role": "input"
+    },
+    "suppressions-seed.json": {
+      "anchoredBy": "Database seed replayed by test/contract.test.ts — the input for every http-suppression-*.json",
+      "role": "input"
+    },
+    "template-vars.json": {
+      "anchoredBy": "Mailgun recipient-variable semantics",
+      "role": "output"
+    }
+  }
+}
