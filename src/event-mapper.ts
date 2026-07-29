@@ -185,7 +185,7 @@ export function mapSesEvent(
 
   const recipients = getRecipients(sesEvent);
   const timestamp = getTimestamp(sesEvent);
-  const sesMessageId = sesEvent.mail?.messageId ?? null;
+  const sesMessageId = sesEvent.mail?.messageId || null;
 
   // Headers are the correlation fallback when the DB has no matching row.
   const headers = sesEvent.mail?.headers ?? [];

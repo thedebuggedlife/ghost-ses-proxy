@@ -242,7 +242,7 @@ export class SqsPoller {
       : undefined;
 
     if (row) {
-      batchMessageId = row.batch_message_id;
+      batchMessageId = stripAngleBrackets(row.batch_message_id);
       ghostEmailId = row.ghost_email_id || ghostEmailId;
       tags = row.tags;
       metrics.eventCorrelationTotal.inc({ result: 'matched' });

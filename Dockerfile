@@ -11,6 +11,9 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:20-alpine
 
+# Suppresses Express's stack-trace-bearing HTML error page on unhandled throws.
+ENV NODE_ENV=production
+
 WORKDIR /app
 COPY --from=builder /app/node_modules node_modules/
 COPY --from=builder /app/dist dist/
