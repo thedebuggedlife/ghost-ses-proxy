@@ -137,12 +137,13 @@ describe('DELETE /v3/:domain/:type/:email', () => {
     expect(suppressionCount()).toBe(3);
   });
 
-  it('increments suppressions_removed_total per type', async () => {
+  it('counts rows actually removed, not delete requests', async () => {
     const app = createApp(deps);
 
     await request(app)
       .delete('/v3/example.com/bounces/bounced%2Btag%40example.com')
       .set('Authorization', AUTH);
+    // Never suppressed — returns 200, but removes nothing, so it must not count.
     await request(app)
       .delete('/v3/example.com/bounces/nobody%40example.com')
       .set('Authorization', AUTH);
@@ -151,9 +152,17 @@ describe('DELETE /v3/:domain/:type/:email', () => {
       .set('Authorization', AUTH);
 
     expect(await removedCounts()).toEqual([
-      { labels: { type: 'bounces' }, value: 2 },
+      { labels: { type: 'bounces' }, value: 1 },
       { labels: { type: 'complaints' }, value: 1 },
     ]);
+  });
+
+  it('does not create a series when nothing was removed', async () => {
+    await request(createApp(deps))
+      .delete('/v3/example.com/bounces/nobody%40example.com')
+      .set('Authorization', AUTH);
+
+    expect(await removedCounts()).toEqual([]);
   });
 
   it('logs the removal with component and recipient', async () => {

@@ -31,7 +31,11 @@ export function createSuppressionRoute(
     }
 
     const removed = deps.db.deleteSuppression(email, type);
-    deps.metrics.suppressionsRemovedTotal.inc({ type });
+    // Counts rows actually deleted, not delete requests — Ghost re-sends these
+    // for addresses that were never suppressed, and those are not removals.
+    if (removed > 0) {
+      deps.metrics.suppressionsRemovedTotal.inc({ type }, removed);
+    }
     log.info({ recipient: email, type, removed }, 'suppression removed');
 
     res.json({

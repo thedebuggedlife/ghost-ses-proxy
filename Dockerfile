@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 RUN apk add --no-cache python3 make g++
 
@@ -9,7 +9,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src/ src/
 RUN npm run build && npm prune --omit=dev
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Suppresses Express's stack-trace-bearing HTML error page on unhandled throws.
 ENV NODE_ENV=production

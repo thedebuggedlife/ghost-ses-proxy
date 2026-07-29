@@ -208,6 +208,8 @@ Three of these deserve justification:
 | `ghost_ses_proxy_suppressions_recorded_total` | counter | `type` ∈ `bounces`\|`complaints`\|`unsubscribes` |
 | `ghost_ses_proxy_suppressions_removed_total` | counter | `type` |
 
+`suppressions_removed_total` counts **rows actually deleted**, not delete requests. Ghost issues `DELETE /v3/:domain/:type/:email` for addresses that were never suppressed and the endpoint answers 200 either way, so counting requests would let the series report removals that did not happen. A no-op delete increments nothing and creates no series.
+
 #### 4.5 Database and build
 
 | Metric | Type | Labels |
@@ -319,7 +321,7 @@ Trade-off, accepted: a message that would previously have been retried is now di
 **Dockerfile becomes multi-stage.** The current single stage ships `python3`, `make`, and `g++` in the runtime image because `better-sqlite3` needs them to compile. Building in a separate stage and copying the already-compiled `node_modules` drops all three from the final image:
 
 ```dockerfile
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -328,7 +330,8 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src/ src/
 RUN npm run build && npm prune --omit=dev
 
-FROM node:20-alpine
+FROM node:22-alpine
+ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /app/node_modules node_modules/
 COPY --from=builder /app/dist dist/
@@ -340,7 +343,13 @@ EXPOSE 3003
 CMD ["node", "dist/index.js"]
 ```
 
-Both stages use `node:20-alpine`, so the native binding compiled in the builder is ABI-compatible with the runtime.
+Both stages use `node:22-alpine`, so the native binding compiled in the builder is ABI-compatible with the runtime.
+
+**Runtime version and the pins that must move with it.** The image was originally specified as `node:20-alpine`; it moved to 22 after the post-execution review, because the AWS SDK now warns that releases published after January 2027 require Node ≥22, and this is the cheap moment to move. Four things are a single coupled decision and must never drift apart: the two `FROM` lines, `engines.node`, the CI `test` job's `node-version`, and the `@types/node` major. Typings describing a newer runtime than the image ships is precisely the defect the review caught — a post-runtime API would typecheck, pass the suite on a developer's newer Node, and first fail at container startup, most likely inside the coverage-excluded `src/index.ts`.
+
+`scripts/Dockerfile.capture` is the deliberate exception and **stays on `node:20-alpine`**. It reproduces the golden fixtures against the pre-rewrite tree, and `captured/MANIFEST.json` records node v20.20.2 as the environment those fixtures came from; bumping it would silently invalidate the reproducibility claim in §8.5.
+
+`ENV NODE_ENV=production` is set in the runtime stage only. Express uses it to suppress the stack-trace-bearing HTML error page on an unhandled throw. It must not be set in the builder, where it would make `npm ci` skip the devDependencies `npm run build` needs.
 
 **`.dockerignore`** adds `test/`, `coverage/`, `dist/`, `.github/`, `ralph/` — and must **not** ignore `src/` or `tsconfig*.json`, which the builder needs.
 
