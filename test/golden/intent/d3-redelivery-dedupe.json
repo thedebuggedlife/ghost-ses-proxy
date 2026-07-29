@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "defect": "D3",
+    "designSection": "§5.3",
+    "kind": "intent",
+    "note": "The events primary key must be a deterministic content hash so the existing INSERT OR IGNORE actually dedupes an SQS redelivery. The payload below carries an EXPLICIT delivery.timestamp — this is load-bearing. getTimestamp() falls back to Date.now()/1000 when no timestamp is present, and such an event hashes differently on every redelivery and still duplicates (design §5.3, Known limitation). A fixture without an explicit timestamp would silently assert the un-fixed path.",
+    "currentBehavior": "lib/sqs-poller.js:54 assigns a fresh uuidv4() per event row, so the INSERT OR IGNORE at lib/db.js:78 can never match. If DeleteMessageCommand fails after processing (network blip, expired receipt handle), SQS redelivers on visibility timeout and the same delivery/open is inserted a second time, inflating Ghost's analytics.",
+    "assertedBy": "test/contract.test.ts and test/sqs-poller.test.ts"
+  },
+
+  "sesEvent": {
+    "eventType": "Delivery",
+    "mail": {
+      "timestamp": "2026-07-20T12:00:00.000Z",
+      "source": "newsletter@example.com",
+      "messageId": "010001912a3b4c5d-0000000000000003-000000",
+      "destination": ["dana@example.com"],
+      "headers": [
+        { "name": "From", "value": "newsletter@example.com" },
+        { "name": "To", "value": "dana@example.com" },
+        { "name": "Subject", "value": "Weekly digest" },
+        { "name": "Message-ID", "value": "<55555555-5555-4555-8555-555555555555@example.com>" },
+        { "name": "X-Ghost-Email-Id", "value": "650000000000000000000009" }
+      ]
+    },
+    "delivery": {
+      "timestamp": "2026-07-20T12:00:05.000Z",
+      "recipients": ["dana@example.com"],
+      "processingTimeMillis": 1234,
+      "smtpResponse": "250 2.0.0 OK",
+      "reportingMTA": "a8-52.smtp-out.amazonses.com"
+    }
+  },
+
+  "eventIdDerivation": {
+    "algorithm": "sha256(parts.join(' ')).digest('hex').slice(0, 32)",
+    "parts": [
+      "010001912a3b4c5d-0000000000000003-000000",
+      "delivered",
+      "dana@example.com",
+      "1784548805"
+    ],
+    "partsSource": "[ n.ses_message_id ?? '', n.event_type, n.recipient, String(n.timestamp) ]",
+    "joinedInput": "010001912a3b4c5d-0000000000000003-000000 delivered dana@example.com 1784548805",
+    "timestampNote": "1784548805 = new Date('2026-07-20T12:00:05.000Z').getTime() / 1000. getTimestamp() preserves millisecond resolution, so a whole-second timestamp stringifies without a decimal part."
+  },
+
+  "expected": {
+    "eventId": "48331fd09573841d97dc2c60a1081f22",
+    "afterFirstDelivery": {
+      "eventsRowCount": 1,
+      "eventIds": ["48331fd09573841d97dc2c60a1081f22"],
+      "deleteMessageCalls": 1
+    },
+    "afterRedeliveryOfTheIdenticalMessage": {
+      "eventsRowCount": 1,
+      "eventIds": ["48331fd09573841d97dc2c60a1081f22"],
+      "deleteMessageCalls": 2,
+      "note": "The second pollOnce must still delete the message and must still count the poll as a success. Only the row insert is suppressed, by INSERT OR IGNORE."
+    }
+  },
+
+  "acceptedTradeOff": "Two genuinely distinct events of the same type for the same recipient at the identical millisecond collapse into one row. That is far less likely than the redelivery duplication it prevents.",
+
+  "migration": "None. Ghost treats events.id as an opaque cursor and the table is ephemeral (90-day cleanup), so existing UUID-keyed rows coexist and age out."
+}

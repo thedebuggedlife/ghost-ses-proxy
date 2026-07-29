@@ -1,0 +1,93 @@
+[
+  {
+    "id": "evt-0001",
+    "event_type": "delivered",
+    "severity": null,
+    "recipient": "alice@example.com",
+    "timestamp": 1750000001,
+    "message_id": "11111111-1111-4111-8111-111111111111@example.com",
+    "email_id": "650000000000000000000001",
+    "delivery_status_code": 250,
+    "delivery_status_message": "OK",
+    "delivery_status_enhanced": "",
+    "tags": "[\"bulk-email\",\"ghost-email\"]"
+  },
+  {
+    "id": "evt-0002",
+    "event_type": "opened",
+    "severity": null,
+    "recipient": "bob@example.com",
+    "timestamp": 1750000002,
+    "message_id": "11111111-1111-4111-8111-111111111111@example.com",
+    "email_id": "650000000000000000000001",
+    "delivery_status_code": null,
+    "delivery_status_message": null,
+    "delivery_status_enhanced": null,
+    "tags": "[\"bulk-email\"]"
+  },
+  {
+    "id": "evt-0003",
+    "event_type": "failed",
+    "severity": "permanent",
+    "recipient": "carol@example.com",
+    "timestamp": 1750000003,
+    "message_id": "22222222-2222-4222-8222-222222222222@example.com",
+    "email_id": "650000000000000000000002",
+    "delivery_status_code": 607,
+    "delivery_status_message": "Not delivering to previously bounced address",
+    "delivery_status_enhanced": "5.1.1 user unknown",
+    "tags": "[\"bulk-email\",\"ghost-email\"]"
+  },
+  {
+    "id": "evt-0004",
+    "event_type": "failed",
+    "severity": "temporary",
+    "recipient": "dave@example.com",
+    "timestamp": 1750000004,
+    "message_id": "22222222-2222-4222-8222-222222222222@example.com",
+    "email_id": "650000000000000000000002",
+    "delivery_status_code": 450,
+    "delivery_status_message": "Temporary bounce",
+    "delivery_status_enhanced": "4.4.7 timeout",
+    "tags": "[\"ghost-email\"]"
+  },
+  {
+    "id": "evt-0005",
+    "event_type": "delivered",
+    "severity": null,
+    "recipient": "erin+news@example.com",
+    "timestamp": 1750000005,
+    "message_id": "33333333-3333-4333-8333-333333333333@example.com",
+    "email_id": "",
+    "delivery_status_code": 250,
+    "delivery_status_message": "OK",
+    "delivery_status_enhanced": "",
+    "tags": "[\"bulk-email\"]"
+  },
+  {
+    "id": "evt-0006",
+    "event_type": "clicked",
+    "severity": null,
+    "recipient": "frank@example.com",
+    "timestamp": 1750000006,
+    "message_id": "33333333-3333-4333-8333-333333333333@example.com",
+    "email_id": "650000000000000000000003",
+    "delivery_status_code": null,
+    "delivery_status_message": null,
+    "delivery_status_enhanced": null,
+    "tags": "[]"
+  },
+  {
+    "id": "evt-0007",
+    "event_type": "complained",
+    "severity": null,
+    "recipient": "grace@example.com",
+    "timestamp": 1750000007,
+    "message_id": "33333333-3333-4333-8333-333333333333@example.com",
+    "email_id": "650000000000000000000003",
+    "delivery_status_code": null,
+    "delivery_status_message": null,
+    "delivery_status_enhanced": null,
+    "tags": "[\"bulk-email\",\"ghost-email\"]"
+  }
+]

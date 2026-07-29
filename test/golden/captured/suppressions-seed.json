@@ -1,0 +1,12 @@
+[
+  {
+    "email": "bounced+tag@example.com",
+    "type": "bounces",
+    "reason": "Permanent bounce"
+  },
+  {
+    "email": "complainer@example.com",
+    "type": "complaints",
+    "reason": "Spam complaint"
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "event_type": "failed",
+    "severity": "temporary",
+    "recipient": "dave@example.com",
+    "timestamp": 1784548808,
+    "ses_message_id": "010001912a3b4c5d-0000000000000004-000000",
+    "ghost_email_id": "650000000000000000000009",
+    "batch_message_id": "<BATCH_UUID>@example.com",
+    "delivery_status_code": 450,
+    "delivery_status_message": "Temporary bounce",
+    "delivery_status_enhanced": "smtp; 452 4.2.2 mailbox full",
+    "is_suppression": false,
+    "suppression_type": null,
+    "suppression_reason": null
+  }
+]

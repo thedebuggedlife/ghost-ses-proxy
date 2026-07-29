@@ -1,0 +1,77 @@
+{
+  "_meta": {
+    "defect": "D1",
+    "designSection": "§5.1",
+    "kind": "intent",
+    "note": "A throw inside the per-recipient send path must release its semaphore slot and count as a failed recipient, not wedge the semaphore and 500 the whole batch. This is the ONE place the rewrite deliberately changes the Ghost-facing wire contract: the same request returns 500 today. Do not capture the current response.",
+    "currentBehavior": "lib/send-email.js:204 acquires a slot but chains release() onto sendRawEmail(...).finally(). Anything throwing before that call (substituteVars, buildRawMime, JSON.stringify, Buffer.from) rejects the .then callback without releasing. Promise.all rejects, the handler's outer catch returns 500 {message: 'Internal server error: ...'}, the successful sends are dropped from the response, and the slot is gone. After SEND_CONCURRENCY such failures every subsequent send hangs forever with no response, no log, and /health still 200.",
+    "assertedBy": "test/contract.test.ts and test/routes/send-email.test.ts"
+  },
+
+  "scenario": {
+    "sendConcurrency": 2,
+    "request": {
+      "method": "POST",
+      "path": "/v3/example.com/messages",
+      "auth": true,
+      "fields": {
+        "from": "Newsletter <newsletter@example.com>",
+        "subject": "Weekly digest",
+        "to": ["alice@example.com", "bob@example.com"],
+        "html": "<p>Hello</p>",
+        "text": "Hello"
+      }
+    },
+    "inducedFailure": {
+      "recipient": "alice@example.com",
+      "when": "before the SES SendRawEmail call",
+      "how": "The test forces a synchronous throw inside the per-recipient callback body — i.e. inside runExclusive's callback and outside the SES promise chain. Stubbing buildRawMime (or substituteVars) to throw for this one recipient reproduces the real D1 path. A rejected SES promise does NOT exercise this defect; the current code already handles that case correctly.",
+      "errorMessage": "induced failure before SES call"
+    },
+    "sesBehaviourForOtherRecipients": "ok"
+  },
+
+  "expected": {
+    "status": 200,
+    "body": {
+      "id": "<<BATCH_UUID>@example.com>",
+      "message": "Queued. Thank you."
+    },
+    "outcome": "partial",
+    "recipients": {
+      "succeeded": 1,
+      "failed": 1
+    },
+    "metrics": {
+      "ghost_ses_proxy_send_batches_total{outcome=\"partial\"}": 1,
+      "ghost_ses_proxy_send_recipients_total{outcome=\"sent\"}": 1,
+      "ghost_ses_proxy_send_recipients_total{outcome=\"failed\"}": 1,
+      "ghost_ses_proxy_send_in_flight": 0
+    },
+    "slotIsReleased": true,
+    "subsequentSendSucceeds": {
+      "note": "Repeat the same request with no induced failure. It must return 200 and not hang. Run it at least sendConcurrency times so a leaked slot cannot hide behind spare capacity.",
+      "repeatCount": 2,
+      "status": 200,
+      "outcome": "success"
+    }
+  },
+
+  "allRecipientsThrow": {
+    "note": "When EVERY recipient throws before its SES call, the batch is a total failure and keeps the existing failure shape — the errors[] array is populated from the thrown messages rather than from SES rejections.",
+    "expected": {
+      "status": 500,
+      "body": {
+        "message": "Failed to send to all recipients",
+        "errors": [
+          { "recipient": "alice@example.com", "error": "induced failure before SES call" },
+          { "recipient": "bob@example.com", "error": "induced failure before SES call" }
+        ]
+      },
+      "outcome": "failure",
+      "metrics": {
+        "ghost_ses_proxy_send_in_flight": 0
+      }
+    }
+  }
+}

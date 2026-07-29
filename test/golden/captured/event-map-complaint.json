@@ -1,0 +1,17 @@
+[
+  {
+    "event_type": "complained",
+    "severity": null,
+    "recipient": "grace@example.com",
+    "timestamp": 1784548809,
+    "ses_message_id": "010001912a3b4c5d-0000000000000005-000000",
+    "ghost_email_id": "650000000000000000000009",
+    "batch_message_id": "<BATCH_UUID>@example.com",
+    "delivery_status_code": null,
+    "delivery_status_message": null,
+    "delivery_status_enhanced": "",
+    "is_suppression": true,
+    "suppression_type": "complaints",
+    "suppression_reason": "Spam complaint"
+  }
+]

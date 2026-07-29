@@ -1,0 +1,21 @@
+From: Résumé <newsletter@example.com>
+To: alice@example.com
+Subject: Résumé — 日本語 ✉️
+Message-ID: <<BATCH_UUID>@example.com>
+X-Ghost-Email-Id: 650000000000000000000005
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_<BOUNDARY>"
+
+------=_Part_<BOUNDARY>
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+R3LDvMOfZSDigJQg5pel5pys6KqeIOKcie+4jw==
+
+------=_Part_<BOUNDARY>
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+R3LDvMOfZSDigJQg5pel5pys6KqeIOKcie+4jzwvcD48L2JvZHk+PC9odG1sPg==
+
+------=_Part_<BOUNDARY>--

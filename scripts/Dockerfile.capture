@@ -1,0 +1,10 @@
+FROM node:20-alpine
+RUN apk add --no-cache python3 make g++
+WORKDIR /app
+COPY package.json ./
+RUN npm install --omit=dev && npm install --no-save aws-sdk-client-mock
+COPY server.js ./
+COPY lib/ lib/
+COPY scripts/ scripts/
+RUN mkdir -p /app/test/golden/captured /data
+CMD ["node", "scripts/capture-golden.cjs"]

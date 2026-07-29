@@ -1,0 +1,88 @@
+{
+  "_request": {
+    "method": "GET",
+    "path": "/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=",
+    "auth": true,
+    "derivedFrom": "http-events-limit-3.json paging.next"
+  },
+  "status": 200,
+  "body": {
+    "items": [
+      {
+        "id": "evt-0004",
+        "event": "failed",
+        "timestamp": 1750000004,
+        "recipient": "dave@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000002"
+        },
+        "severity": "temporary",
+        "delivery-status": {
+          "code": 450,
+          "message": "Temporary bounce",
+          "description": "",
+          "enhanced-code": "4.4.7 timeout"
+        }
+      },
+      {
+        "id": "evt-0005",
+        "event": "delivered",
+        "timestamp": 1750000005,
+        "recipient": "erin+news@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": ""
+        },
+        "delivery-status": {
+          "code": 250,
+          "message": "OK",
+          "description": "",
+          "enhanced-code": ""
+        }
+      },
+      {
+        "id": "evt-0006",
+        "event": "clicked",
+        "timestamp": 1750000006,
+        "recipient": "frank@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000003"
+        }
+      },
+      {
+        "id": "evt-0007",
+        "event": "complained",
+        "timestamp": 1750000007,
+        "recipient": "grace@example.com",
+        "message": {
+          "headers": {
+            "message-id": "<BATCH_UUID>@example.com"
+          }
+        },
+        "user-variables": {
+          "email-id": "650000000000000000000003"
+        }
+      }
+    ],
+    "paging": {
+      "next": "",
+      "previous": "",
+      "first": "",
+      "last": ""
+    }
+  }
+}

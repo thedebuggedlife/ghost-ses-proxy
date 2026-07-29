@@ -1,0 +1,96 @@
+{
+  "_meta": {
+    "defect": "D7",
+    "designSection": "§5.5",
+    "kind": "intent",
+    "note": "A recognized SES eventType whose event block is missing must map to [] rather than throwing, and the poller must DELETE the message and count sqs_parse_errors_total{reason=\"malformed_payload\"}. This is deliberately distinct from the skip path: Send and DeliveryDelay are EXPECTED to produce no events and increment events_skipped_total, so the two must never share a denominator.",
+    "currentBehavior": "lib/event-mapper.js:18-26 dereferences sesEvent.delivery.recipients / .bounce.bouncedRecipients / .complaint.complainedRecipients unguarded, while mapSesEvent:79 already guards `sesEvent.bounce &&` for bounceType. A missing block therefore throws a TypeError that rejects the chain in lib/sqs-poller.js:120-124 and escapes pollOnce WITHOUT ever calling deleteMessage. The message returns on visibility timeout, throws again, and repeats forever — events stop flowing and Ghost's analytics silently freeze.",
+    "acceptedTradeOff": "A message that would previously have been retried is now discarded. The failure is deterministic — the same payload throws identically on every redelivery — so retrying could only ever re-throw. Discarding converts an unbounded stall into a single counted event.",
+    "assertedBy": "test/contract.test.ts, test/event-mapper.test.ts and test/sqs-poller.test.ts"
+  },
+
+  "mapSesEventReturnsEmpty": [
+    {
+      "name": "delivery-missing-delivery-block",
+      "sesEvent": {
+        "eventType": "Delivery",
+        "mail": {
+          "timestamp": "2026-07-20T12:00:00.000Z",
+          "source": "newsletter@example.com",
+          "messageId": "010001912a3b4c5d-0000000000000020-000000",
+          "destination": ["alice@example.com"],
+          "headers": [
+            { "name": "Message-ID", "value": "<66666666-6666-4666-8666-666666666666@example.com>" },
+            { "name": "X-Ghost-Email-Id", "value": "650000000000000000000009" }
+          ]
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "bounce-missing-bounce-block",
+      "sesEvent": {
+        "eventType": "Bounce",
+        "mail": {
+          "timestamp": "2026-07-20T12:00:00.000Z",
+          "source": "newsletter@example.com",
+          "messageId": "010001912a3b4c5d-0000000000000021-000000",
+          "destination": ["bob@example.com"],
+          "headers": [
+            { "name": "Message-ID", "value": "<66666666-6666-4666-8666-666666666666@example.com>" }
+          ]
+        }
+      },
+      "expected": [],
+      "note": "mapSesEvent already guards `sesEvent.bounce &&` when choosing severity, so this payload reaches getRecipients with a Transient mapping and then throws there. The guard must cover getRecipients too."
+    },
+    {
+      "name": "complaint-missing-complaint-block",
+      "sesEvent": {
+        "eventType": "Complaint",
+        "mail": {
+          "timestamp": "2026-07-20T12:00:00.000Z",
+          "source": "newsletter@example.com",
+          "messageId": "010001912a3b4c5d-0000000000000022-000000",
+          "destination": ["carol@example.com"],
+          "headers": [
+            { "name": "Message-ID", "value": "<66666666-6666-4666-8666-666666666666@example.com>" }
+          ]
+        }
+      },
+      "expected": []
+    }
+  ],
+
+  "pollerBehavior": {
+    "note": "Drive pollOnce with an SQS message whose Body is one of the payloads above (raw or SNS-enveloped — both must behave identically).",
+    "expected": {
+      "throws": false,
+      "eventsRowsInserted": 0,
+      "suppressionsRowsInserted": 0,
+      "deleteMessageCalled": true,
+      "deleteMessageCalls": 1,
+      "metrics": {
+        "ghost_ses_proxy_sqs_parse_errors_total{reason=\"malformed_payload\"}": 1,
+        "ghost_ses_proxy_sqs_messages_deleted_total{outcome=\"success\"}": 1,
+        "ghost_ses_proxy_sqs_polls_total{outcome=\"success\"}": 1,
+        "ghost_ses_proxy_events_stored_total": 0,
+        "ghost_ses_proxy_events_skipped_total": "must NOT be incremented — a malformed payload is a parse error, not a skip"
+      },
+      "log": {
+        "level": "warn",
+        "component": "sqs",
+        "fields": ["sesEventType", "sesMessageId"]
+      }
+    }
+  },
+
+  "contrastWithTheSkipPath": {
+    "note": "These are the payloads that legitimately produce no events. They must keep incrementing events_skipped_total and must NOT increment sqs_parse_errors_total.",
+    "cases": [
+      { "sesEventType": "Send", "metric": "ghost_ses_proxy_events_skipped_total{ses_event_type=\"Send\"}" },
+      { "sesEventType": "DeliveryDelay", "metric": "ghost_ses_proxy_events_skipped_total{ses_event_type=\"DeliveryDelay\"}" },
+      { "sesEventType": "SomethingNew", "metric": "ghost_ses_proxy_events_skipped_total{ses_event_type=\"other\"}", "note": "Unrecognized types collapse to `other` — plan Design Decision P10. This label is fed by untrusted third-party JSON and must stay bounded." }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+From: newsletter@example.com
+To: alice@example.com
+Subject: Custom headers
+Reply-To: reply@example.com
+Sender: sender@example.com
+Message-ID: <<BATCH_UUID>@example.com>
+X-Foo: foo-value
+X-Bar: bar-value
+X-Ghost-Email-Id: 650000000000000000000004
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_<BOUNDARY>"
+
+------=_Part_<BOUNDARY>
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+Q3VzdG9tIGhlYWRlcnM=
+
+------=_Part_<BOUNDARY>
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+Q3VzdG9tIGhlYWRlcnM8L3A+PC9ib2R5PjwvaHRtbD4=
+
+------=_Part_<BOUNDARY>--
