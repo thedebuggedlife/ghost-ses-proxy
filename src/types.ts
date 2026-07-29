@@ -151,10 +151,18 @@ export interface SendRawEmailResult {
   messageId: string | undefined;
 }
 
+/** Correlation fields the send path passes through to the `component: 'ses'` log lines. */
+export interface SesSendContext {
+  reqId?: string;
+  batchId?: string;
+  recipient?: string;
+}
+
 export interface SesClient {
   sendRawEmail(
     rawMessage: string | Uint8Array,
     configurationSetName?: string,
+    context?: SesSendContext,
   ): Promise<SendRawEmailResult>;
   destroy(): void;
 }

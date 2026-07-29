@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 8 complete
-> **Current phase:** Phase 9
+> **Status:** In progress — Phase 9 complete
+> **Current phase:** Phase 10
 
 ---
 
@@ -823,38 +823,62 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
 
 ### Tasks
 
-- [ ] **9.1** Implement the instrumented SES client
+- [x] **9.1** Implement the instrumented SES client
   - File: `src/ses-client.ts`
   - `createSesClient(config: Config, deps: { logger; metrics }, client?: SESClient): SesClient` — the underlying `SESClient` is injectable so `aws-sdk-client-mock` can intercept it in tests.
   - `sendRawEmail(rawMessage, configurationSetName)` returns `{ messageId }` exactly as `lib/ses-client.js` does, and additionally: times the call and records `ses_send_duration_seconds{outcome}` (`success`/`error`), increments `ses_errors_total{error_type}` on failure, and logs at `debug` on success / `error` on failure with `component: 'ses'` plus `recipient`, `sesMessageId`, `durationMs`.
   - Map `err.name` through the allowlist exported by `src/metrics.ts` (Phase 4) — raw SDK error names are not a bounded set, so anything unlisted collapses to `other`.
   - Rejections propagate to the caller unchanged; the send path is what decides partial vs total failure.
 
-- [ ] **9.2** Test the SES client
+- [x] **9.2** Test the SES client
   - File: `test/ses-client.test.ts`
   - With `aws-sdk-client-mock`: `sendRawEmail` returns the `MessageId`; the duration histogram records with `outcome="success"` and with `outcome="error"`; each allowlisted error name maps to its own `error_type`; an unknown name collapses to `other`; rejections propagate.
 
-- [ ] **9.3** Port the auth middleware
+- [x] **9.3** Port the auth middleware
   - File: `src/middleware/auth.ts`
   - `createAuthMiddleware(config: Config)` returning an express middleware — a direct port of `lib/auth.js` with **no behavior change**, including the three distinct 401 bodies (`missing credentials`, `invalid credentials`, `invalid API key`) that Ghost may surface.
   - Keep the `indexOf(':')` + `slice(colonIndex + 1)` parse so an API key containing a colon still works.
 
-- [ ] **9.4** Test the auth middleware
+- [x] **9.4** Test the auth middleware
   - File: `test/middleware/auth.test.ts`
   - Valid `Basic base64("api:" + key)` passes; missing header → 401; non-`Basic` scheme → 401; malformed base64 → 401; no colon in the decoded value → 401; wrong key → 401; a key containing a colon parses correctly. Assert the exact 401 body for each case.
 
-- [ ] **9.5** Build the shared test deps helper
+- [x] **9.5** Build the shared test deps helper
   - File: `test/helpers/deps.ts`
   - `makeDeps(overrides?: Partial<AppDeps>): AppDeps & { logs: () => object[]; register: Registry }` where `AppDeps = Deps & { stats: Stats }`.
   - Builds: `loadConfig` over a canned env object; a pino logger writing to an in-memory stream with a `logs()` accessor returning parsed lines; `createMetrics(new Registry())`; `createDb(':memory:', …)`; a mocked `ses`; **and `createStats(db)` plus the `attachDbGauges` call**.
   - `stats` is not optional. `createApp` takes `Deps & { stats: Stats }` (Phase 11.3), and every later phase calls `createApp(makeDeps())`; omitting `stats` is a compile error under `strict`, and Phase 11.5 asserts `db_rows` appears in the exposition output, which requires the gauges to be attached (critique finding 6).
   - A fresh `Registry` per call is what prevents prom-client's "already registered" flake across test files (design §4).
 
-- [ ] **9.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **9.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/ses-client.js` + `dist/middleware/auth.js` (still no `dist/src/`), `test:coverage` runs **283 tests across 13 files** at **100% statements / branches / functions / lines**. Per-file confirmation via `--coverage.reporter=json-summary`: `src/ses-client.ts` and `src/middleware/auth.ts` are both at 100/100 (the text reporter prints an empty file table when every file is at threshold — do not read that as "not measured").
+
+**Files added.** `src/ses-client.ts`, `src/middleware/auth.ts`, `test/ses-client.test.ts` (24 tests), `test/middleware/auth.test.ts` (11 tests), `test/helpers/deps.ts`. **Modified:** `src/types.ts` (see Deviation 1).
+
+**Deviation 1 — `SesClient.sendRawEmail` gains an optional third parameter, `context?: SesSendContext`.** Task 9.1 requires the success/failure log lines to carry `recipient`, but the `SesClient` interface Phase 3 wrote has no way to supply one — `sendRawEmail(rawMessage, configurationSetName)` sees only bytes. `SesSendContext` (`{reqId?, batchId?, recipient?}`) is spread into the log line and matches design §3's field table exactly (`reqId` "propagated into send/SES lines"; `batchId`/`recipient` listed for `ses`). It is optional and defaults to `{}`, so the legacy two-argument call shape is unchanged. **Phase 13 must pass it** — otherwise the SES log lines are uncorrelatable and the design §3 schema is unmet.
+
+**Deviation 2 — the auth middleware drops `lib/auth.js`'s `try/catch` around `Buffer.from(…, 'base64')`.** It is unreachable: `Buffer.from(string, 'base64')` never throws, it silently drops invalid characters (the same lenient decode Phase 1's Deviation 2 recorded for the page-token 400). Keeping it would have added a permanently-uncoverable catch block. **No behavior change** — all three 401 bodies are still reachable, and two tests pin the paths that would have hit the catch: `Basic !!!!not base64!!!!` and `Basic ====` both decode to a colon-less string and return `{message: 'Unauthorized: invalid credentials'}`, byte-identical to what the legacy catch would have produced. Everything else is a verbatim port, including the `indexOf(':')`/`slice(colonIndex + 1)` parse that makes a colon-bearing API key work.
+
+**Auth behaviors now pinned that the legacy code never stated.** The username is **ignored** — only the password is compared, so `Basic base64("anyone:<key>")` passes. The scheme check is case-**sensitive** (`basic ` → 401 missing credentials). A `Basic ` header with nothing after it yields **`missing credentials`**, not `invalid credentials`: Node's HTTP parser strips trailing OWS from header values per RFC 7230, so `startsWith('Basic ')` is what fails. This was found by an actual failing assertion, not by inspection — the test originally expected `invalid credentials`.
+
+**`src/ses-client.ts` shape.** `createSesClient(config, deps, client = new SESClient({region, credentials}))`. The third parameter is a **default-valued** parameter, not an optional one, so the production construction path is a real covered line and tests can still inject. Timing uses `performance.now()`; the histogram observes seconds, the log line carries `Math.round(durationMs)`. `error_type` comes from `toSesErrorType(errorName(err))` where `errorName` is `(err as {name?: unknown})?.name` narrowed to a string — so a rejection reason that is `null`, a non-object, or carries a non-string `name` all collapse to `other` rather than throwing inside the error handler. All three are tested. Rejections re-throw the **original** reason (`rejects.toBe(err)`), because the send path decides partial vs total failure.
+
+**Reading a prom-client histogram's `_count` from `getMetricsAsJSON()`.** There is no top-level metric named `…_seconds_count`; the count lives inside the histogram's own `values` array as an entry with `metricName: '<name>_count'` alongside the `le` buckets and `_sum`. A later phase asserting histogram counts should copy `durationCount()` from `test/ses-client.test.ts` rather than re-deriving this.
+
+**`test/helpers/deps.ts` (task 9.5).** Exports `TEST_ENV` (a full env object with `DB_PATH=':memory:'` and `LOG_LEVEL='trace'` so every line is captured), `makeDeps(overrides?)`, and `createSesStub()`.
+- `makeDeps` returns `AppDeps & { logs; register }` where `AppDeps = Deps & { stats: Stats }`, exactly as the plan specifies. It builds config → logger (in-memory stream) → `createMetrics(new Registry())` → `createDb(config.dbPath, …)` → `createSesStub()` → `createStats(db)`, then calls `attachDbGauges`. Every collaborator is individually overridable; `register` is `metrics.register`, so passing a `metrics` override keeps the two consistent.
+- **`stats` is not optional** and `attachDbGauges` always runs, which is what makes Phase 11.5's `db_rows` assertion possible.
+- `createSesStub()` is a separate export rather than being baked into the return type: it satisfies `SesClient`, records `calls` (raw message decoded to a string, configuration set, context), and has a mutable `respond(call, index)` so Phase 13 can make specific recipients fail without `aws-sdk-client-mock`. `destroy()` flips `destroyed`.
+- **Callers must close `deps.db`.** Both test files added this phase do so in `afterEach`; a leaked `:memory:` handle is harmless but the pattern should continue.
+- The helper is exercised at runtime by both new test files (not merely typechecked), so `makeDeps` is known-good before Phase 11 depends on it.
+
+**Notes for later phases.**
+- `aws-sdk-client-mock`'s `mockClient(SESClient)` intercepts `Client.prototype.send`, so it catches **both** an injected `SESClient` and the one `createSesClient` constructs by default. Tests need `sesMock.reset()` in `beforeEach` and `sesMock.restore()` in `afterAll`; without the restore the prototype stays patched for later files in the same worker.
+- `.on(SendRawEmailCommand).rejects(x)` coerces its argument into an `Error`. To reject with a non-`Error` reason (the `other` collapse cases) use `.callsFake(() => Promise.reject(reason))`.
+- `src/middleware/` now exists; Phase 10's `observability.ts` and its `test/middleware/` test directory slot in alongside without new config — `vitest.config.ts`'s `include: ['test/**/*.test.ts']` already matches nested directories.
 
 ---
 
