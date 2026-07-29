@@ -2,7 +2,7 @@
 
 > **Design document:** [design.md](./design.md)
 > **Status:** In progress
-> **Current phase:** Phase 6 (Phase 5 complete)
+> **Current phase:** Phase 7 (Phase 6 complete)
 
 ---
 
@@ -331,23 +331,38 @@ Confirmed as designed:
 
 ### Tasks
 
-- [ ] **6.1** Restructure the AWS setup section
+- [x] **6.1** Restructure the AWS setup section
   - File: `README.md`
   - Replace the `## AWS setup guide` heading/intro with `## AWS infrastructure setup` introducing Options A and B, per design §8 blueprint. **Move** the five existing console steps under `### Option B: Manual console setup` without rewording them (design §8: moved, not rewritten — avoids conflicts with the concurrent branch); add only the one-line note that the CDK IAM policy is scoped tighter than Option B's `"Resource": "*"`.
 
-- [ ] **6.2** Write Option A walkthrough
+- [x] **6.2** Write Option A walkthrough
   - File: `README.md`
   - Follow design §8 structure exactly: prerequisites; steps 1–6 (configure, deploy, DNS-if-not-Route53, generate-env, production access, start proxy); day-2 operations (redeploy, `ACCESS_KEY_SERIAL` rotation, second deployment via `STACK_NAME` — names derive from it, `cdk destroy`); troubleshooting (already-exists, sandbox, pending verification). Include the CDK configuration table from design §2 (or an abridged table + pointer to `cdk/.env.example` — pick one, record in Observations).
 
-- [ ] **6.3** Add Quick start pointer
+- [x] **6.3** Add Quick start pointer
   - File: `README.md`
   - In `## Quick start` step 1, add one line pointing to "AWS infrastructure setup" so users find the CDK path first (design §8 rule).
 
-- [ ] **6.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass (docs phase; baseline gate confirms nothing broke)
+- [x] **6.4** Build + test gate: `cd cdk && npx tsc --noEmit && npx vitest run && SES_DOMAIN=example.com npx cdk synth --quiet` — all pass (docs phase; baseline gate confirms nothing broke)
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Gate result:** `npx tsc --noEmit` OK, `npx vitest run` OK (3 files, 88 tests — unchanged from Phase 5), `SES_DOMAIN=example.com npx cdk synth --quiet` OK with all AWS credential/region/profile env vars explicitly unset. Docs-only phase, so no code changed.
+
+**Decisions:**
+- **Full CDK configuration table inlined in the README** (task 6.2 offered "full table" or "abridged + pointer"). All 15 design §2 variables are in the Option A "1. Configure" step, with `<prefix>`-derived defaults spelled out concretely (`ghost-ses-proxy`, `ghost-ses-proxy-events`, `ghost-ses-proxy/credentials`) rather than as templates — a user reading the README does not know what `<prefix>` means. A one-line pointer to `cdk/.env.example` follows the table for the commented long-form version.
+- **Option B moved, not rewritten — verified by diff.** `git diff README.md` shows exactly six removed lines: the `## AWS setup guide` heading and the five `### N. …` step headings, each re-added at `####` to nest under `### Option B: Manual console setup`. Every other line of the console guide (including the "You need four AWS resources" intro, the JSON policy blocks, and the closing "Use this user's access key…") is byte-identical, so the concurrent branch's merge surface is unchanged.
+- **The IAM scoping note is a blockquote directly above Option B's steps**, not inside step 5, so it is visible before a reader starts clicking through the console.
+- **Anchor links** (`#option-a-deploy-with-cdk`, `#option-b-manual-console-setup`, `#aws-infrastructure-setup`) use GitHub's slug rules; verified against the emitted heading text.
+
+**Additions beyond the design §8 blueprint** (all small, all judged worth it):
+- Step 4 documents the `PROXY_API_KEY` behaviour and explicitly tells the user to copy the generated key into Ghost's `mailgun_api_key` setting — otherwise the generated-key convenience creates a dead end, since Quick start step 4 assumes the user invented the key.
+- A fourth troubleshooting entry for `generate-env` reporting a missing stack (the Phase 5 "run npx cdk deploy first" error path), pointing at `AWS_REGION`/`STACK_NAME` mismatch as the second cause.
+- A day-2 bullet for the design §6 renaming caveat (renaming a physical name replaces the resource; a queue replacement changes the URL and drops in-flight messages).
+
+**For Phase 7:** the design's Files Changed table lists `README.md` as modified in Phase 6 only — that is now done, so 7.3's `git status` check should see `README.md` plus `.gitignore` and (after 7.1) `.github/workflows/ci.yml` as the only modified non-`cdk/` files.
+
+**Files modified:** `README.md`.
 
 ---
 
