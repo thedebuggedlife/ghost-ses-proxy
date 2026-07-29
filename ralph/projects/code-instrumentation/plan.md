@@ -2,8 +2,8 @@
 
 > **Design document:** [design.md](./design.md)
 > **Critique:** [plan-critique.md](./plan-critique.md)
-> **Status:** In progress — Phase 6 complete
-> **Current phase:** Phase 7
+> **Status:** In progress — Phase 7 complete
+> **Current phase:** Phase 8
 
 ---
 
@@ -684,36 +684,59 @@ The test was rewritten to pin that as behavior (no throw, no row, `db_errors_tot
 
 ### Tasks
 
-- [ ] **7.1** Port template variable substitution
+- [x] **7.1** Port template variable substitution
   - File: `src/template-vars.ts`
   - `substituteVars(str: string, vars: Record<string, string>): string` — a direct port of `lib/template-vars.js`. Preserve the exact regex `/%recipient\.([^%]+)%/g` and the "unmatched patterns left as-is" behavior, including the `!str || !vars` early return.
 
-- [ ] **7.2** Test template variable substitution
+- [x] **7.2** Test template variable substitution
   - File: `test/template-vars.test.ts`
   - Substitutes `%recipient.x%`; leaves unknown vars verbatim; handles empty string, null/undefined vars, multiple occurrences of the same variable, and regex-special characters in **values** (a value containing `$&` must not be interpreted as a replacement pattern).
 
-- [ ] **7.3** Derive the shared SES fixture set from the captured inputs
+- [x] **7.3** Derive the shared SES fixture set from the captured inputs
   - File: `test/helpers/fixtures.ts`
   - **Import `test/golden/captured/ses-event-inputs.json`** (written by the harness in task 0.6) and re-export it as typed fixtures — do **not** restate the payloads by hand. Two hand-maintained copies drift, and Phase 15 compares the new `mapSesEvent` over these fixtures against JSON produced from the captured ones; a one-character divergence makes the contract test red for a reason unrelated to the rewrite, and the natural repair silently voids the assertion (critique finding 8, Design Decision P9).
   - Add the SNS-enveloped variants (`{ Type: 'Notification', Message: JSON.stringify(event) }`) for Phase 14 by wrapping the imported payloads programmatically.
 
-- [ ] **7.4** Port event mapping
+- [x] **7.4** Port event mapping
   - File: `src/event-mapper.ts`
   - `mapSesEvent(sesEvent: SesEvent): NormalizedEvent[]` — types only, logic preserved **exactly** (design "what stays the same"): the `EVENT_MAP` table, the `Send`/`DeliveryDelay` skip list, the Permanent→607/Transient→450 bounce split, per-event-type recipient extraction, the timestamp fallback chain (`delivery`/`bounce`/`complaint`/`open`/`click` → `mail.timestamp` → `Date.now()`, all `/1000`), `Message-ID` and `X-Ghost-Email-Id` header extraction, angle-bracket stripping, the suppression flags for Bounce-permanent/Complaint/Reject, and the `diagnosticCode` enhanced code taken from the first bounced recipient.
   - **D7 fix** (design §5.5). `getRecipients` (`lib/event-mapper.js:18-26`) dereferences `sesEvent.delivery`, `.bounce`, and `.complaint` without guarding — while `mapSesEvent:79` *does* guard `sesEvent.bounce &&` for `bounceType`. Guard every optional block so a payload missing its event block yields **no recipients rather than a `TypeError`**, and `mapSesEvent` returns `[]`. This is the only intentional logic change in this file; everything above is preserved exactly.
   - The poller half of D7 lands in Phase 14.1: an empty result from a *recognized* `eventType` means delete the message and count `sqs_parse_errors_total{reason="malformed_payload"}` — distinct from the `Send`/`DeliveryDelay` skip path, so the two never share a denominator.
   - `noUncheckedIndexedAccess` will additionally force explicit guards on array indexing (e.g. `bouncedRecipients[0]`). Add the guard; do not add a non-null assertion that changes behavior on an empty array.
 
-- [ ] **7.5** Test event mapping
+- [x] **7.5** Test event mapping
   - File: `test/event-mapper.test.ts`
   - Per design Test Plan: each SES type maps to the right event/severity/code; the Permanent vs Transient severity split; `Send`/`DeliveryDelay` return `[]`; unknown type returns `[]`; a payload with no `eventType` returns `[]`; recipient extraction per type; timestamp fallback to `mail.timestamp` and then to `Date.now()`; header extraction and angle-bracket stripping; suppression flags for Bounce-permanent, Complaint, and Reject; multi-recipient fan-out produces one entry per recipient.
   - **D7 regression:** a `Delivery` with no `delivery` block, a `Bounce` with no `bounce`, and a `Complaint` with no `complaint` each return `[]` rather than throwing. Assert this explicitly — under the current implementation each throws a `TypeError`, and the whole point of the fix is that the poller can no longer be wedged by one.
 
-- [ ] **7.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
+- [x] **7.6** Build + test gate: `npm run typecheck && npm run build && npm run test:coverage` — all tests pass
 
 ### Observations
 
-<!-- Agent: write notes here during execution -->
+**Completed 2026-07-28.** All six tasks done; the gate is green — `typecheck` clean, `build` emits `dist/{cleanup,config,db,event-mapper,logger,metrics,schema,stats,template-vars,types}.js` (still no `dist/src/`), `test:coverage` runs **210 tests across 8 files** at **100% statements / branches / functions / lines**.
+
+**Files added.** `src/template-vars.ts`, `src/event-mapper.ts`, `test/helpers/fixtures.ts`, `test/template-vars.test.ts` (13 tests), `test/event-mapper.test.ts` (61 tests). No existing file was modified.
+
+**Early verification of the Phase 15 assertion — all 11 captured `event-map-*.json` fixtures reproduce exactly.** Rather than trust inspection, a throwaway `tsx` script replayed every entry of `captured/ses-event-inputs.json` through the new `mapSesEvent`, applied `scripts/normalize.cjs`'s `normalizeJson` to the result, and byte-compared the JSON against the captured output. Result: `ALL MATCH`, including `send`/`delivery-delay`/`unknown-type` → `[]`. The script was deleted (Phase 15 owns `test/contract.test.ts`), but this means the port is already known-good against the golden set and a Phase 15 failure on these files would indicate a *harness* problem, not a mapper one.
+
+**Deviation 1 — `substituteVars(str, vars)` widens `vars` to `Record<string, string> | null | undefined`.** The plan's signature is `vars: Record<string, string>`, but the `!vars` half of the legacy early return is then unreachable and uncoverable, and `captured/template-vars.json` contains a `null-vars` case that Phase 15 must replay. `str` stays `string` — its `!str` branch is reachable with `''`. Note the legacy callers in `lib/send-email.js:208-209` pass `fields['html']`/`fields['text']`, which can be `undefined`; **Phase 8/13 must coalesce to `''` at the call site** rather than widening `str`, so the return type stays `string`.
+
+**Deviation 2 — `mapSesEvent` accepts `SesEvent | null | undefined`.** Same reasoning: `lib/sqs-poller.js`'s `parseSqsBody` returns `null`, and the legacy `!sesEvent` guard is real. Typing the parameter as `SesEvent` alone would leave a dead branch that costs branch coverage without removing the runtime check.
+
+**Deviation 3 — recipients with no `emailAddress` are filtered out rather than emitted as `undefined`.** `noUncheckedIndexedAccess` types `bouncedRecipients[i].emailAddress` as `string | undefined`; the legacy `.map(r => r.emailAddress)` would put `undefined` into `recipient`, which `NormalizedEvent.recipient: string` forbids. `emailAddresses()` maps then filters with a type predicate. This is unreachable from anything SES emits (it is the same malformed-payload class as D7) and is pinned by a test ("drops a bounced recipient carrying no emailAddress").
+
+**Deviation 4 — `extractHeader` returns `null` for a matching header with no `value`.** Legacy returned `headers[i].value`, i.e. `undefined`. `NormalizedEvent.batch_message_id`/`ghost_email_id` are `string | null`, so `?? null` normalizes it. Also pinned by a test.
+
+**Structural change with no behavioral effect — the Bounce mapping and the suppression block are hoisted out of `mapSesEvent`.** `PERMANENT_BOUNCE`/`TRANSIENT_BOUNCE` are module constants (the legacy code built the same object literals inline) and the three-way suppression decision is a `getSuppression()` returning a spreadable `{is_suppression, suppression_type, suppression_reason}`. `SKIP_TYPES` is a `ReadonlySet` instead of an object used as a lookup table. `mapping` had to become a `const` ternary rather than a `let` with an `if/else`: TypeScript discards the `if (!mapping) return []` narrowing inside the `recipients.map()` closure when the variable is `let`.
+
+**D7 fix (task 7.4).** `getRecipients` uses `?.`/`??` on `delivery`, `bounce.bouncedRecipients`, `complaint.complainedRecipients`, and `mail.destination`. Seven tests pin the fixed behavior: a `Delivery`/`Bounce`/`Complaint` missing its whole block, and each of the three missing only its recipient array, all return `[]` without throwing. `getTimestamp` already guarded its blocks in the legacy code and was ported unchanged.
+
+**`test/helpers/fixtures.ts` (task 7.3).** Imports `captured/ses-event-inputs.json` and re-exports it as `Record<string, SesEvent>` — nothing is restated. `sesEvent(name)` returns a `structuredClone`, because the mapper tests mutate fixtures heavily (`delete event.delivery`, reassigning `headers`) and a shared object would leak between tests. Also exports `snsEnvelope`/`snsEvent`/`rawSqsBody`/`snsSqsBody` for Phase 14 (`{Type:'Notification', MessageId, TopicArn, Message: JSON.stringify(event)}` — `parseSqsBody` only reads `Type` and `Message`, the other two are realism) and `withoutEventBlock(name, block)` for the D7 poller half. The JSON cast needs `as unknown as` — the inferred JSON type carries fields `SesEvent` does not model (`source`, `processingTimeMillis`, `subscription`, `deliveryDelay`), and one fixture's `click.linkTags` is `null`.
+
+**Notes for later phases.**
+- `SesEvent` in `src/types.ts` needed no change; every fixture typechecks against it through the single cast in `fixtures.ts`.
+- Phase 14's poller must distinguish "recognized `eventType`, empty result" (→ `sqs_parse_errors_total{reason="malformed_payload"}`) from `SKIP_TYPES`/unknown-type (→ `events_skipped_total`). `mapSesEvent` returns `[]` for **all** of them, so the poller has to re-inspect `eventType` itself — `SKIP_TYPES` and `EVENT_MAP` are currently module-private in `src/event-mapper.ts` and will need exporting (or an equivalent predicate) when Phase 14 lands.
+- `mapSesEvent` is exported as a **named** export (`import { mapSesEvent }`), unlike the legacy `module.exports = mapSesEvent`. Same for `substituteVars`.
 
 ---
 
