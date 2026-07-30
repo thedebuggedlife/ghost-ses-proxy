@@ -33,6 +33,8 @@ cp .env.example .env
 # Edit .env with your AWS credentials and settings
 ```
 
+Don't have the AWS resources yet? See [AWS infrastructure setup](#aws-infrastructure-setup) — the CDK app provisions everything and writes this `.env` for you.
+
 ### 2. Run with Docker Compose
 
 ```bash
@@ -81,15 +83,115 @@ UPDATE settings SET value = '"example.com"'
 
 > **Note:** The values must be JSON-encoded strings (wrapped in double quotes inside single quotes). After updating, restart Ghost to pick up the changes.
 
-## AWS setup guide
+## AWS infrastructure setup
+
+The proxy needs a verified SES domain, an SES Configuration Set, an SNS topic, an SQS queue, and an IAM user with credentials. There are two ways to provision them:
+
+- **[Option A — deploy with CDK](#option-a-deploy-with-cdk) (recommended)** — one command, repeatable, and it writes the proxy's `.env` for you
+- **[Option B — manual console setup](#option-b-manual-console-setup)** — click through the AWS Console yourself
+
+### Option A: Deploy with CDK
+
+The `cdk/` directory is a self-contained AWS CDK app that provisions everything above, including a dead-letter queue and DNS records when your domain is hosted in Route53.
+
+#### Prerequisites
+
+- An AWS account with CLI credentials configured — `aws sts get-caller-identity` must succeed
+- Node.js 20 or newer
+- A domain you own (optionally with DNS hosted in Route53, for full automation)
+
+#### 1. Configure
+
+```bash
+cd cdk
+npm install
+cp .env.example .env
+# Edit cdk/.env: set SES_DOMAIN (and HOSTED_ZONE_NAME if your DNS is in Route53)
+```
+
+`SES_DOMAIN` is the only required variable. Everything else has a default:
+
+| Variable | Required | Default | Meaning |
+|----------|----------|---------|---------|
+| `SES_DOMAIN` | **Yes** | — | Sending domain (becomes `MAILGUN_DOMAIN` in the proxy's `.env`) |
+| `AWS_REGION` | No | `us-east-1` | Region for the stack and all resources |
+| `AWS_ACCOUNT_ID` | No | resolved from your CLI credentials | Explicit account id. Only needed when `HOSTED_ZONE_NAME` is set |
+| `HOSTED_ZONE_NAME` | No | *(unset)* | Route53 public hosted zone containing `SES_DOMAIN`. When set, DKIM and MAIL FROM records are created for you |
+| `STACK_NAME` | No | `GhostSesProxy` | CloudFormation stack name. All resource-name defaults derive from it (kebab-cased: `GhostSesProxy` → `ghost-ses-proxy`) |
+| `SES_CONFIGURATION_SET` | No | `ghost-ses-proxy` | Configuration Set name |
+| `SNS_TOPIC_NAME` | No | `ghost-ses-proxy-events` | SNS topic name |
+| `SQS_QUEUE_NAME` | No | `ghost-ses-proxy-events` | SQS queue name (the DLQ is `<name>-dlq`) |
+| `IAM_USER_NAME` | No | `ghost-ses-proxy` | IAM user name |
+| `CREDENTIALS_SECRET_NAME` | No | `ghost-ses-proxy/credentials` | Secrets Manager secret holding the access key |
+| `ACCESS_KEY_SERIAL` | No | `1` | Increment to rotate the IAM access key on the next deploy |
+| `SQS_RETENTION_DAYS` | No | `14` | Queue message retention, max 14 |
+| `SQS_VISIBILITY_TIMEOUT_SECONDS` | No | `30` | Queue visibility timeout |
+| `DLQ_MAX_RECEIVE_COUNT` | No | `5` | Receives before a message moves to the DLQ; `0` disables the DLQ |
+| `SES_MAIL_FROM_SUBDOMAIN` | No | *(unset)* | e.g. `bounce` → custom MAIL FROM domain `bounce.<SES_DOMAIN>` |
+
+The same list, with commentary, lives in [`cdk/.env.example`](cdk/.env.example). Invalid or missing values are reported all at once before anything is deployed.
+
+#### 2. Deploy
+
+```bash
+npx cdk bootstrap   # first time only, per account/region
+npx cdk deploy
+```
+
+#### 3. Add DNS records (skip if you set `HOSTED_ZONE_NAME`)
+
+The deploy prints `DkimCnameName1..3` and `DkimCnameValue1..3` outputs — add those three CNAME records at your DNS provider. If you set `SES_MAIL_FROM_SUBDOMAIN`, also add the `MailFromMxRecord` and `MailFromSpfRecord` entries. SES marks the identity **Verified** once DNS propagates (usually minutes, up to 72 hours).
+
+With `HOSTED_ZONE_NAME` set, these records are created in Route53 automatically and no outputs are printed.
+
+#### 4. Generate the proxy's `.env`
+
+```bash
+npm run generate-env
+```
+
+This reads the stack outputs and the generated credentials, then writes `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `SQS_QUEUE_URL`, `SES_CONFIGURATION_SET`, and `MAILGUN_DOMAIN` into the repo-root `.env` (mode `0600`). Use `npm run generate-env -- --out /path/to/.env` to write elsewhere.
+
+It is safe to re-run: managed values are replaced in place, while `PROXY_API_KEY`, `PORT`, `LOG_LEVEL`, comments, and any other keys are preserved verbatim. If there is no `PROXY_API_KEY` yet, a random one is generated for you — that is the key Ghost authenticates with, so copy it into Ghost's `mailgun_api_key` setting (Quick start step 4). Secret values are never printed to the console.
+
+#### 5. Request SES production access (one time)
+
+New AWS accounts are in the SES sandbox: you can only send to verified addresses, capped at 200 emails/day. Request production access in the Console under **SES > Account dashboard > Request production access**. AWS reviews this manually; it cannot be automated.
+
+#### 6. Start the proxy
+
+```bash
+cd ..
+docker compose up -d
+curl http://localhost:3003/health
+```
+
+#### Day-2 operations
+
+- **Change a setting:** edit `cdk/.env` → `npx cdk deploy` → re-run `npm run generate-env` if any output changed, then restart the proxy.
+- **Rotate credentials:** bump `ACCESS_KEY_SERIAL` → `npx cdk deploy` → `npm run generate-env` → restart the proxy.
+- **Renaming a resource replaces it.** Changing `SQS_QUEUE_NAME` creates a new queue with a new URL and drops any in-flight messages; re-run `generate-env` afterwards.
+- **Second deployment** (e.g. a second Ghost instance): copy `cdk/.env` and change `STACK_NAME`. Every resource name derives from it, so the two stacks coexist in one account with no other overrides.
+- **Tear down:** `npx cdk destroy` removes everything, including the credentials secret. Events still sitting in the queue are lost.
+
+#### Troubleshooting
+
+- **"Resource already exists"** — you previously created some of these resources by hand. Either point `cdk/.env` at different names (or a different `STACK_NAME`), or delete the manual resources first. Importing existing resources into the stack is not supported.
+- **Emails only reach a few addresses** — you are still in the SES sandbox; see step 5.
+- **Identity stuck at "Pending verification"** — the DKIM CNAMEs are missing, mistyped, or not yet propagated; see step 3.
+- **`npm run generate-env` says the stack does not exist** — run `npx cdk deploy` first, and check that `AWS_REGION`/`STACK_NAME` in `cdk/.env` match what you deployed.
+
+### Option B: Manual console setup
 
 You need four AWS resources: a verified SES domain, a Configuration Set, an SNS topic, and an SQS queue.
 
-### 1. Verify your domain in SES
+> The IAM policy below grants `ses:SendRawEmail` on `"Resource": "*"`. The CDK app (Option A) scopes the same permission to just the email identity and Configuration Set it creates.
+
+#### 1. Verify your domain in SES
 
 In the AWS Console under **SES > Verified identities**, add your sending domain. Complete DNS verification by adding the DKIM CNAME records to your domain's DNS.
 
-### 2. Create an SES Configuration Set
+#### 2. Create an SES Configuration Set
 
 Under **SES > Configuration sets**, create one named `ghost-ses-proxy` (or whatever you set in `SES_CONFIGURATION_SET`).
 
@@ -104,11 +206,11 @@ Add an **SNS event destination** that publishes these event types:
 
 Point this destination at the SNS topic you'll create next.
 
-### 3. Create an SNS topic
+#### 3. Create an SNS topic
 
 Create a standard SNS topic (e.g., `ghost-ses-events`). No special configuration needed — it just bridges SES to SQS.
 
-### 4. Create an SQS queue
+#### 4. Create an SQS queue
 
 Create a standard SQS queue (e.g., `ghost-ses-events`). Subscribe it to the SNS topic.
 
@@ -130,7 +232,7 @@ Set the queue's access policy to allow your SNS topic to send messages:
 }
 ```
 
-### 5. Create an IAM user
+#### 5. Create an IAM user
 
 Create an IAM user with programmatic access and attach this policy:
 
