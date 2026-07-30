@@ -1,0 +1,11 @@
+{
+  "_request": {
+    "method": "DELETE",
+    "path": "/v3/example.com/unsubscribed/complainer%40example.com",
+    "auth": true
+  },
+  "status": 404,
+  "body": {
+    "message": "Unknown suppression type: unsubscribed"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "_precondition": {
+    "note": "Captured immediately after seeding and before any send scenario, so the counts are exactly the seed. Assert this fixture only against a database in the same state.",
+    "seeds": [
+      "events-seed.json",
+      "suppressions-seed.json"
+    ],
+    "expectedCounts": {
+      "message_map": 0,
+      "recipient_emails": 0,
+      "events": 7,
+      "suppressions": 2
+    }
+  },
+  "_request": {
+    "method": "GET",
+    "path": "/health",
+    "auth": false
+  },
+  "status": 200,
+  "body": {
+    "status": "ok",
+    "tables": {
+      "message_map": 0,
+      "recipient_emails": 0,
+      "events": 7,
+      "suppressions": 2
+    }
+  }
+}

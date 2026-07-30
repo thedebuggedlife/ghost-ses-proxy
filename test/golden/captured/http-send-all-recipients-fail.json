@@ -1,0 +1,23 @@
+{
+  "_request": {
+    "method": "POST",
+    "path": "/v3/example.com/messages",
+    "auth": true,
+    "scenario": "all-recipients-fail",
+    "fieldsFrom": "send-scenarios.json"
+  },
+  "status": 500,
+  "body": {
+    "message": "Failed to send to all recipients",
+    "errors": [
+      {
+        "recipient": "alice@example.com",
+        "error": "SES unavailable"
+      },
+      {
+        "recipient": "bob@example.com",
+        "error": "SES unavailable"
+      }
+    ]
+  }
+}

@@ -8,6 +8,22 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run test:coverage
+
   docker-build:
     runs-on: ubuntu-latest
     steps:
@@ -23,10 +39,31 @@ jobs:
           load: true
           tags: ghost-ses-proxy:ci
 
-      - name: Syntax-check every source file
+      - name: Syntax-check the built entrypoint
         run: |
-          docker run --rm --entrypoint sh ghost-ses-proxy:ci -c \
-            'for f in server.js lib/*.js; do node --check "$f" || exit 1; done'
+          docker run --rm --entrypoint node ghost-ses-proxy:ci --check dist/index.js
+
+      # design.md §7: the image's major, engines.node, this workflow's
+      # node-version and the @types/node major are one coupled decision.
+      # Typings newer than the runtime typecheck clean and fail at startup.
+      - name: Verify the Node version coupling
+        run: |
+          set -euo pipefail
+          image_major=$(docker run --rm --entrypoint node ghost-ses-proxy:ci \
+            -e 'process.stdout.write(process.versions.node.split(".")[0])')
+          engines_major=$(node -e \
+            'process.stdout.write(require("./package.json").engines.node.replace(/[^0-9]/g, ""))')
+          types_major=$(node -e \
+            'process.stdout.write(require("./package.json").devDependencies["@types/node"].replace(/[^0-9.]/g, "").split(".")[0])')
+          workflow_major=$(grep -m1 "node-version:" .github/workflows/ci.yml | tr -dc '0-9')
+          echo "image=$image_major engines=$engines_major types=$types_major workflow=$workflow_major"
+          for pair in "engines:$engines_major" "types:$types_major" "workflow:$workflow_major"; do
+            if [ "${pair#*:}" != "$image_major" ]; then
+              echo "::error::Node version drift — image is $image_major but ${pair%%:*} is ${pair#*:}." >&2
+              echo "All four must move together (see design.md §7)." >&2
+              exit 1
+            fi
+          done
 
       - name: Verify runtime dependencies resolve in the image
         run: |
@@ -37,6 +74,9 @@ jobs:
             require('@aws-sdk/client-sqs');
             require('busboy');
             require('uuid');
+            require('pino');
+            require('pino-http');
+            require('prom-client');
           "
 
   cdk-test:

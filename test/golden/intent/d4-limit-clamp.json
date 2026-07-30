@@ -1,0 +1,68 @@
+{
+  "_meta": {
+    "defect": "D4",
+    "designSection": "§5.4",
+    "kind": "intent",
+    "note": "`limit` must be clamped to [1, 1000]. The default when the parameter is absent or unparseable stays 300, matching the current implementation.",
+    "currentBehavior": "lib/events-api.js does `parseInt(req.query.limit, 10) || 300` with no bound. ?limit=99999999 is honoured verbatim (an unbounded scan); ?limit=0 falls through the `||` to 300; ?limit=-5 reaches SQLite as `LIMIT -5`, which SQLite treats as no limit at all.",
+    "clamp": "limit = Math.min(1000, Math.max(1, parsed))  — applied after the parse, with the 300 default when the parse yields NaN",
+    "seededFrom": "test/golden/captured/events-seed.json (7 rows, evt-0001 … evt-0007)",
+    "assertedBy": "test/contract.test.ts and test/routes/events.test.ts"
+  },
+
+  "cases": [
+    {
+      "name": "above-maximum",
+      "request": { "method": "GET", "path": "/v3/example.com/events?limit=99999999", "host": "localhost:3003", "auth": true },
+      "expected": {
+        "status": 200,
+        "effectiveLimit": 1000,
+        "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
+        "pagingNext": "",
+        "pagingNextNote": "rows.length (7) !== effectiveLimit (1000), so no cursor is emitted."
+      }
+    },
+    {
+      "name": "exactly-maximum",
+      "request": { "method": "GET", "path": "/v3/example.com/events?limit=1000", "host": "localhost:3003", "auth": true },
+      "expected": {
+        "status": 200,
+        "effectiveLimit": 1000,
+        "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
+        "pagingNext": ""
+      }
+    },
+    {
+      "name": "zero",
+      "request": { "method": "GET", "path": "/v3/example.com/events?limit=0", "host": "localhost:3003", "auth": true },
+      "expected": {
+        "status": 200,
+        "effectiveLimit": 1,
+        "itemIds": ["evt-0001"],
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0=",
+        "pagingNextNote": "rows.length (1) === effectiveLimit (1), so a cursor over evt-0001 is emitted. paging.next is never normalized (design §8.4); the Host header must be pinned to localhost:3003 — Design Decision P8."
+      }
+    },
+    {
+      "name": "negative",
+      "request": { "method": "GET", "path": "/v3/example.com/events?limit=-5", "host": "localhost:3003", "auth": true },
+      "expected": {
+        "status": 200,
+        "effectiveLimit": 1,
+        "itemIds": ["evt-0001"],
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0="
+      }
+    },
+    {
+      "name": "non-numeric-falls-back-to-default",
+      "note": "Unchanged from the current implementation — not part of the D4 fix, pinned here so the clamp is not implemented in a way that also changes the default.",
+      "request": { "method": "GET", "path": "/v3/example.com/events?limit=abc", "host": "localhost:3003", "auth": true },
+      "expected": {
+        "status": 200,
+        "effectiveLimit": 300,
+        "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
+        "pagingNext": ""
+      }
+    }
+  ]
+}

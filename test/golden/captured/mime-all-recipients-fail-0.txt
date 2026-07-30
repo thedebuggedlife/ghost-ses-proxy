@@ -1,0 +1,15 @@
+From: newsletter@example.com
+To: alice@example.com
+Subject: Everything fails
+Message-ID: <<BATCH_UUID>@example.com>
+X-Ghost-Email-Id: 650000000000000000000006
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_<BOUNDARY>"
+
+------=_Part_<BOUNDARY>
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+RXZlcnl0aGluZyBmYWlscw==
+
+------=_Part_<BOUNDARY>--

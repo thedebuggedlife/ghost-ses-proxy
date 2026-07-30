@@ -1,0 +1,82 @@
+{
+  "_meta": {
+    "defect": "D4",
+    "designSection": "§5.4",
+    "kind": "intent",
+    "note": "A repeated query parameter must not 500. firstString(v) coerces a possibly-array param to its first value, so ?event=a&event=b honours 'a'. Applied to both `event` and `tags`.",
+    "currentBehavior": "lib/events-api.js:17 calls req.query.event.split(' OR '). Express parses ?event=a&event=b into an array, so .split is undefined → TypeError → 500. Identical defect for `tags` at line 23.",
+    "helper": "firstString(v: unknown): string => Array.isArray(v) ? String(v[0] ?? '') : typeof v === 'string' ? v : ''",
+    "seededFrom": "test/golden/captured/events-seed.json",
+    "assertedBy": "test/contract.test.ts and test/routes/events.test.ts"
+  },
+
+  "cases": [
+    {
+      "name": "repeated-event",
+      "request": {
+        "method": "GET",
+        "path": "/v3/example.com/events?event=delivered&event=opened",
+        "host": "localhost:3003",
+        "auth": true
+      },
+      "expected": {
+        "status": 200,
+        "honoredValue": "delivered",
+        "itemIds": ["evt-0001", "evt-0005"],
+        "pagingNext": ""
+      }
+    },
+    {
+      "name": "repeated-tags",
+      "request": {
+        "method": "GET",
+        "path": "/v3/example.com/events?tags=bulk-email&tags=ghost-email",
+        "host": "localhost:3003",
+        "auth": true
+      },
+      "expected": {
+        "status": 200,
+        "honoredValue": "bulk-email",
+        "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0005", "evt-0007"],
+        "pagingNext": ""
+      }
+    },
+    {
+      "name": "repeated-event-with-OR-syntax-preserved",
+      "note": "The first value keeps its normal ' OR ' splitting — firstString only collapses the repeat, it does not change filter semantics.",
+      "request": {
+        "method": "GET",
+        "path": "/v3/example.com/events?event=delivered%20OR%20opened&event=failed",
+        "host": "localhost:3003",
+        "auth": true
+      },
+      "expected": {
+        "status": 200,
+        "honoredValue": "delivered OR opened",
+        "itemIds": ["evt-0001", "evt-0002", "evt-0005"],
+        "pagingNext": ""
+      }
+    },
+    {
+      "name": "empty-repeated-event-is-no-filter",
+      "note": "String(v[0] ?? '') on an empty first value yields '', which is falsy and therefore applies no event filter — the same as omitting the parameter.",
+      "request": {
+        "method": "GET",
+        "path": "/v3/example.com/events?event=&event=opened",
+        "host": "localhost:3003",
+        "auth": true
+      },
+      "expected": {
+        "status": 200,
+        "honoredValue": "",
+        "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
+        "pagingNext": ""
+      }
+    }
+  ],
+
+  "mustNotHappen": {
+    "status": 500,
+    "reason": "A 500 from a well-formed repeated query parameter is the defect. If any case above returns 500 the rewrite has preserved D4."
+  }
+}
