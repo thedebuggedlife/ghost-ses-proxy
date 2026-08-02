@@ -81,6 +81,84 @@ type CounterKey = {
   [K in keyof Metrics]: Metrics[K] extends Counter<string> ? K : never;
 }[keyof Metrics];
 
+export interface ZeroInitEntry {
+  property: CounterKey;
+  /** Exposed metric name; read by the `/metrics` scrape test, so it is not duplicated in tests. */
+  name: string;
+  label: string;
+  values: readonly string[];
+}
+
+/** Every bounded-label counter and the exhaustive child set to pre-create at 0. */
+export const ZERO_INIT_SPEC: readonly ZeroInitEntry[] = [
+  {
+    property: 'sendBatchesTotal',
+    name: `${PREFIX}send_batches_total`,
+    label: 'outcome',
+    values: SEND_OUTCOMES,
+  },
+  {
+    property: 'sendRecipientsTotal',
+    name: `${PREFIX}send_recipients_total`,
+    label: 'outcome',
+    values: RECIPIENT_OUTCOMES,
+  },
+  {
+    property: 'sesErrorsTotal',
+    name: `${PREFIX}ses_errors_total`,
+    label: 'error_type',
+    values: [...SES_ERROR_TYPES, 'other'],
+  },
+  {
+    property: 'suppressionsRecordedTotal',
+    name: `${PREFIX}suppressions_recorded_total`,
+    label: 'type',
+    values: SUPPRESSION_TYPES,
+  },
+  {
+    property: 'suppressionsRemovedTotal',
+    name: `${PREFIX}suppressions_removed_total`,
+    label: 'type',
+    values: SUPPRESSION_TYPES,
+  },
+  {
+    property: 'sqsPollsTotal',
+    name: `${PREFIX}sqs_polls_total`,
+    label: 'outcome',
+    values: SQS_POLL_OUTCOMES,
+  },
+  {
+    property: 'sqsMessagesDeletedTotal',
+    name: `${PREFIX}sqs_messages_deleted_total`,
+    label: 'outcome',
+    values: SQS_POLL_OUTCOMES,
+  },
+  {
+    property: 'sqsParseErrorsTotal',
+    name: `${PREFIX}sqs_parse_errors_total`,
+    label: 'reason',
+    values: SQS_PARSE_ERROR_REASONS,
+  },
+  {
+    property: 'eventCorrelationTotal',
+    name: `${PREFIX}event_correlation_total`,
+    label: 'result',
+    values: EVENT_CORRELATION_RESULTS,
+  },
+  {
+    property: 'dbCleanupRunsTotal',
+    name: `${PREFIX}db_cleanup_runs_total`,
+    label: 'outcome',
+    values: CLEANUP_OUTCOMES,
+  },
+];
+
+function zeroInitialise(metrics: Metrics): void {
+  for (const { property, label, values } of ZERO_INIT_SPEC) {
+    for (const value of values) metrics[property].inc({ [label]: value }, 0);
+  }
+}
+
 export function createMetrics(register: Registry): Metrics {
   collectDefaultMetrics({ register });
 
@@ -261,6 +339,8 @@ export function createMetrics(register: Registry): Metrics {
     { version: getVersion(), node_version: process.version },
     1,
   );
+
+  zeroInitialise(metrics);
 
   return metrics;
 }
