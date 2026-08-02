@@ -46,6 +46,7 @@ import { createApp } from '../src/app';
 import { runCleanup } from '../src/cleanup';
 import { loadConfig } from '../src/config';
 import { mapSesEvent } from '../src/event-mapper';
+import { SQS_PARSE_ERROR_REASONS } from '../src/metrics';
 import { clampLimit } from '../src/routes/events';
 import { TABLE_NAMES } from '../src/schema';
 import { SqsPoller } from '../src/sqs-poller';
@@ -70,6 +71,7 @@ import {
   type TestDeps,
 } from './helpers/deps';
 import { sesEvent, sesFixtureNames } from './helpers/fixtures';
+import { normalisedChildren } from './helpers/metrics';
 import { normalize, normalizeValue } from './helpers/normalize';
 
 // --- Fixture access ---------------------------------------------------------
@@ -831,11 +833,17 @@ describe('intent/d7-malformed-payload.json (D7)', () => {
         ),
       ).toBe(1);
       expect(
-        await metricValues(
+        await normalisedChildren(
           deps.register,
           'ghost_ses_proxy_sqs_parse_errors_total',
+          'reason',
+          SQS_PARSE_ERROR_REASONS,
         ),
-      ).toEqual([]);
+      ).toEqual({
+        invalid_json: 0,
+        unrecognized_format: 0,
+        malformed_payload: 0,
+      });
       expect(sqsMock.commandCalls(DeleteMessageCommand)).toHaveLength(1);
     },
   );

@@ -29,6 +29,7 @@ vi.mock('../../src/mime', async () => {
 
 import { createApp } from '../../src/app';
 import { loadConfig } from '../../src/config';
+import { RECIPIENT_OUTCOMES, SEND_OUTCOMES } from '../../src/metrics';
 import {
   listField,
   scalarField,
@@ -42,6 +43,7 @@ import {
   type SesStub,
   type TestDeps,
 } from '../helpers/deps';
+import { normalisedChildren } from '../helpers/metrics';
 
 const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
 const CAPTURED = join(__dirname, '..', 'golden', 'captured');
@@ -117,9 +119,20 @@ describe('POST /v3/:domain/messages', () => {
   }
 
   async function batchOutcomes(): Promise<Record<string, number>> {
-    const values = await metricValues('ghost_ses_proxy_send_batches_total');
-    return Object.fromEntries(
-      values.map((entry) => [String(entry.labels['outcome']), entry.value]),
+    return normalisedChildren(
+      deps.register,
+      'ghost_ses_proxy_send_batches_total',
+      'outcome',
+      SEND_OUTCOMES,
+    );
+  }
+
+  async function recipientOutcomes(): Promise<Record<string, number>> {
+    return normalisedChildren(
+      deps.register,
+      'ghost_ses_proxy_send_recipients_total',
+      'outcome',
+      RECIPIENT_OUTCOMES,
     );
   }
 
@@ -211,10 +224,13 @@ describe('POST /v3/:domain/messages', () => {
     it('counts the batch as success and both recipients as sent', async () => {
       await post(app, scenarios.canonical.fields);
 
-      expect(await batchOutcomes()).toEqual({ success: 1 });
-      expect(await metricValues('ghost_ses_proxy_send_recipients_total')).toEqual(
-        [{ labels: { outcome: 'sent' }, value: 2 }],
-      );
+      expect(await batchOutcomes()).toEqual({
+        success: 1,
+        partial: 0,
+        failure: 0,
+        rejected: 0,
+      });
+      expect(await recipientOutcomes()).toEqual({ sent: 2, failed: 0 });
     });
 
     it('observes the batch size histogram once per batch', async () => {
@@ -387,13 +403,16 @@ describe('POST /v3/:domain/messages', () => {
       await post(app, scenarios['missing-from'].fields);
       await post(app, scenarios['malformed-recipient-variables'].fields);
 
-      expect(await batchOutcomes()).toEqual({ rejected: 2 });
-      expect(
-        await metricValues('ghost_ses_proxy_send_recipients_total'),
-      ).toEqual([]);
+      expect(await batchOutcomes()).toEqual({
+        success: 0,
+        partial: 0,
+        failure: 0,
+        rejected: 2,
+      });
+      expect(await recipientOutcomes()).toEqual({ sent: 0, failed: 0 });
     });
 
-    it('returns 500 without a send_batches_total outcome when the body is not multipart', async () => {
+    it('returns 500 without incrementing any send_batches_total outcome when the body is not multipart', async () => {
       const res = await request(app)
         .post('/v3/example.com/messages')
         .set('Authorization', AUTH)
@@ -404,10 +423,15 @@ describe('POST /v3/:domain/messages', () => {
       expect((res.body as { message: string }).message).toMatch(
         /^Internal server error: /,
       );
-      expect(await batchOutcomes()).toEqual({});
+      expect(await batchOutcomes()).toEqual({
+        success: 0,
+        partial: 0,
+        failure: 0,
+        rejected: 0,
+      });
     });
 
-    it('returns 500 when the batch insert fails', async () => {
+    it('returns 500 and increments no batch outcome when the batch insert fails', async () => {
       deps.db.insertMessageMap = () => {
         throw new Error('database is locked');
       };
@@ -418,7 +442,12 @@ describe('POST /v3/:domain/messages', () => {
       expect(res.body).toEqual({
         message: 'Internal server error: database is locked',
       });
-      expect(await batchOutcomes()).toEqual({});
+      expect(await batchOutcomes()).toEqual({
+        success: 0,
+        partial: 0,
+        failure: 0,
+        rejected: 0,
+      });
     });
   });
 
@@ -436,7 +465,12 @@ describe('POST /v3/:domain/messages', () => {
           { recipient: 'bob@example.com', error: 'SES unavailable' },
         ],
       });
-      expect(await batchOutcomes()).toEqual({ failure: 1 });
+      expect(await batchOutcomes()).toEqual({
+        success: 0,
+        partial: 0,
+        failure: 1,
+        rejected: 0,
+      });
       expect(count('recipient_emails')).toBe(0);
     });
 
@@ -450,13 +484,13 @@ describe('POST /v3/:domain/messages', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({ message: 'Queued. Thank you.' });
-      expect(await batchOutcomes()).toEqual({ partial: 1 });
-      expect(
-        await metricValues('ghost_ses_proxy_send_recipients_total'),
-      ).toEqual([
-        { labels: { outcome: 'sent' }, value: 1 },
-        { labels: { outcome: 'failed' }, value: 1 },
-      ]);
+      expect(await batchOutcomes()).toEqual({
+        success: 0,
+        partial: 1,
+        failure: 0,
+        rejected: 0,
+      });
+      expect(await recipientOutcomes()).toEqual({ sent: 1, failed: 1 });
       expect(count('recipient_emails')).toBe(1);
     });
 
@@ -557,13 +591,11 @@ describe('POST /v3/:domain/messages', () => {
     };
 
     async function d1BatchOutcomes(): Promise<Record<string, number>> {
-      const json = await d1Deps.register.getMetricsAsJSON();
-      const values =
-        json.find(
-          (metric) => metric.name === 'ghost_ses_proxy_send_batches_total',
-        )?.values ?? [];
-      return Object.fromEntries(
-        values.map((entry) => [String(entry.labels['outcome']), entry.value]),
+      return normalisedChildren(
+        d1Deps.register,
+        'ghost_ses_proxy_send_batches_total',
+        'outcome',
+        SEND_OUTCOMES,
       );
     }
 
@@ -592,7 +624,12 @@ describe('POST /v3/:domain/messages', () => {
         ) as unknown as string,
         message: 'Queued. Thank you.',
       });
-      expect(await d1BatchOutcomes()).toEqual({ partial: 1 });
+      expect(await d1BatchOutcomes()).toEqual({
+        success: 0,
+        partial: 1,
+        failure: 0,
+        rejected: 0,
+      });
       expect(await d1Gauge('ghost_ses_proxy_send_in_flight')).toBe(0);
       expect(await d1Gauge('ghost_ses_proxy_send_queue_depth')).toBe(0);
 
@@ -618,7 +655,12 @@ describe('POST /v3/:domain/messages', () => {
         expect(res.status).toBe(200);
       }
 
-      expect(await d1BatchOutcomes()).toEqual({ partial: 1, success: 2 });
+      expect(await d1BatchOutcomes()).toEqual({
+        success: 2,
+        partial: 1,
+        failure: 0,
+        rejected: 0,
+      });
       expect(await d1Gauge('ghost_ses_proxy_send_in_flight')).toBe(0);
     });
 
@@ -642,7 +684,12 @@ describe('POST /v3/:domain/messages', () => {
           },
         ],
       });
-      expect(await d1BatchOutcomes()).toEqual({ failure: 1 });
+      expect(await d1BatchOutcomes()).toEqual({
+        success: 0,
+        partial: 0,
+        failure: 1,
+        rejected: 0,
+      });
       expect(await d1Gauge('ghost_ses_proxy_send_in_flight')).toBe(0);
       expect(ses.calls).toHaveLength(0);
     });
