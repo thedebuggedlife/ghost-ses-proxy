@@ -1,11 +1,14 @@
 import type { RequestHandler } from 'express';
+import { SUPPRESSION_TYPES } from '../metrics';
 import type { Deps, SuppressionType } from '../types';
 
-const VALID_TYPES: ReadonlySet<string> = new Set<SuppressionType>([
-  'bounces',
-  'complaints',
-  'unsubscribes',
-]);
+const VALID_TYPES: ReadonlySet<string> = new Set<SuppressionType>(
+  SUPPRESSION_TYPES,
+);
+
+function isSuppressionType(value: string): value is SuppressionType {
+  return VALID_TYPES.has(value);
+}
 
 export interface SuppressionParams {
   domain: string;
@@ -24,7 +27,7 @@ export function createSuppressionRoute(
     // `lib/suppression-api.js` so double-encoded addresses resolve identically.
     const email = decodeURIComponent(req.params.email);
 
-    if (!VALID_TYPES.has(type)) {
+    if (!isSuppressionType(type)) {
       log.warn({ type }, 'unknown suppression type');
       res.status(404).json({ message: `Unknown suppression type: ${type}` });
       return;

@@ -1,9 +1,17 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app';
+import { SUPPRESSION_TYPES } from '../../src/metrics';
+import type { SuppressionType } from '../../src/types';
 import { makeDeps, type TestDeps } from '../helpers/deps';
 
 const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
+
+const EMAIL_BY_TYPE: Record<SuppressionType, string> = {
+  bounces: 'bounced%2Btag%40example.com',
+  complaints: 'complainer%40example.com',
+  unsubscribes: 'unsub%40example.com',
+};
 
 interface CountRow {
   c: number;
@@ -62,13 +70,9 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   it('accepts every valid suppression type', async () => {
     const app = createApp(deps);
 
-    for (const [type, email] of [
-      ['bounces', 'bounced%2Btag%40example.com'],
-      ['complaints', 'complainer%40example.com'],
-      ['unsubscribes', 'unsub%40example.com'],
-    ] as const) {
+    for (const type of SUPPRESSION_TYPES) {
       const res = await request(app)
-        .delete(`/v3/example.com/${type}/${email}`)
+        .delete(`/v3/example.com/${type}/${EMAIL_BY_TYPE[type]}`)
         .set('Authorization', AUTH);
       expect(res.status).toBe(200);
     }

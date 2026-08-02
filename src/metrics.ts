@@ -6,7 +6,7 @@ import {
   type Registry,
 } from 'prom-client';
 import { getVersion } from './logger';
-import type { Metrics } from './types';
+import type { Metrics, SuppressionType } from './types';
 
 const PREFIX = 'ghost_ses_proxy_';
 
@@ -47,6 +47,39 @@ export function toSesErrorType(name: string | undefined | null): SesErrorType {
   const match = SES_ERROR_TYPES.find((known) => known === name);
   return match ?? 'other';
 }
+
+export const SEND_OUTCOMES = [
+  'success',
+  'partial',
+  'failure',
+  'rejected',
+] as const;
+export const RECIPIENT_OUTCOMES = ['sent', 'failed'] as const;
+export const SUPPRESSION_TYPES: readonly SuppressionType[] = [
+  'bounces',
+  'complaints',
+  'unsubscribes',
+] as const;
+export const SQS_POLL_OUTCOMES = ['success', 'error'] as const;
+export const SQS_PARSE_ERROR_REASONS = [
+  'invalid_json',
+  'unrecognized_format',
+  'malformed_payload',
+] as const;
+export const EVENT_CORRELATION_RESULTS = ['matched', 'unmatched'] as const;
+export const CLEANUP_OUTCOMES = ['success', 'error'] as const;
+
+export type SendOutcome = (typeof SEND_OUTCOMES)[number];
+export type RecipientOutcome = (typeof RECIPIENT_OUTCOMES)[number];
+export type SqsPollOutcome = (typeof SQS_POLL_OUTCOMES)[number];
+export type SqsParseErrorReason = (typeof SQS_PARSE_ERROR_REASONS)[number];
+export type EventCorrelationResult = (typeof EVENT_CORRELATION_RESULTS)[number];
+export type CleanupOutcome = (typeof CLEANUP_OUTCOMES)[number];
+
+/** Keys of `Metrics` whose value is a Counter — excludes the register, gauges and histograms. */
+type CounterKey = {
+  [K in keyof Metrics]: Metrics[K] extends Counter<string> ? K : never;
+}[keyof Metrics];
 
 export function createMetrics(register: Registry): Metrics {
   collectDefaultMetrics({ register });

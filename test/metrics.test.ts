@@ -4,10 +4,11 @@ import {
   HTTP_DURATION_BUCKETS,
   SEND_BATCH_RECIPIENT_BUCKETS,
   SES_ERROR_TYPES,
+  SUPPRESSION_TYPES,
   createMetrics,
   toSesErrorType,
 } from '../src/metrics';
-import type { Metrics } from '../src/types';
+import type { Metrics, SuppressionType } from '../src/types';
 import pkg from '../package.json';
 
 interface CatalogEntry {
@@ -362,5 +363,19 @@ describe('toSesErrorType', () => {
       'LimitExceededException',
       'TimeoutError',
     ]);
+  });
+});
+
+describe('label-value enumerations', () => {
+  it('SUPPRESSION_TYPES enumerates the SuppressionType union exhaustively', () => {
+    const exhaustive: Record<SuppressionType, true> = {
+      bounces: true,
+      complaints: true,
+      unsubscribes: true,
+    };
+
+    expect([...SUPPRESSION_TYPES].sort()).toEqual(
+      Object.keys(exhaustive).sort(),
+    );
   });
 });
