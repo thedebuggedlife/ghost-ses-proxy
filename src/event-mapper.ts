@@ -50,10 +50,16 @@ const TRANSIENT_BOUNCE: EventMapping = {
 };
 
 /** Types with no Mailgun equivalent — intentionally skipped. */
-const SKIP_TYPES: ReadonlySet<string> = new Set(['Send', 'DeliveryDelay']);
+export const SKIP_TYPES = ['Send', 'DeliveryDelay'] as const;
 
-export function isSkippedSesEventType(eventType: string): boolean {
-  return SKIP_TYPES.has(eventType);
+export type SkippedSesEventType = (typeof SKIP_TYPES)[number];
+
+const SKIP_TYPE_SET: ReadonlySet<string> = new Set(SKIP_TYPES);
+
+export function isSkippedSesEventType(
+  eventType: string,
+): eventType is SkippedSesEventType {
+  return SKIP_TYPE_SET.has(eventType);
 }
 
 /** True when `mapSesEvent` knows the type, so an empty result means a malformed payload (D7). */
@@ -171,7 +177,7 @@ export function mapSesEvent(
 
   const eventType = sesEvent.eventType;
 
-  if (SKIP_TYPES.has(eventType)) return [];
+  if (isSkippedSesEventType(eventType)) return [];
 
   // Bounce severity depends on the bounce type, so it is not a static table entry.
   const mapping: EventMapping | undefined =

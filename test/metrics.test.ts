@@ -1,6 +1,7 @@
 import { Registry, register as globalRegister } from 'prom-client';
 import { describe, expect, it } from 'vitest';
 import {
+  DB_OPERATIONS,
   HTTP_DURATION_BUCKETS,
   SEND_BATCH_RECIPIENT_BUCKETS,
   SES_ERROR_TYPES,
@@ -9,7 +10,7 @@ import {
   createMetrics,
   toSesErrorType,
 } from '../src/metrics';
-import type { Metrics, SuppressionType } from '../src/types';
+import type { DbOperation, Metrics, SuppressionType } from '../src/types';
 import pkg from '../package.json';
 
 interface CatalogEntry {
@@ -379,6 +380,19 @@ describe('label-value enumerations', () => {
       Object.keys(exhaustive).sort(),
     );
   });
+
+  it('DB_OPERATIONS enumerates the DbOperation union exhaustively', () => {
+    const exhaustive: Record<DbOperation, true> = {
+      insertMessageMap: true,
+      insertRecipientEmail: true,
+      insertEvent: true,
+      insertSuppression: true,
+      deleteSuppression: true,
+      lookupRecipientEmail: true,
+    };
+
+    expect([...DB_OPERATIONS].sort()).toEqual(Object.keys(exhaustive).sort());
+  });
 });
 
 /**
@@ -422,6 +436,15 @@ const ZERO_INIT_ORACLE: Record<string, string[]> = {
   ],
   ghost_ses_proxy_event_correlation_total: ['matched', 'unmatched'],
   ghost_ses_proxy_db_cleanup_runs_total: ['error', 'success'],
+  ghost_ses_proxy_db_errors_total: [
+    'deleteSuppression',
+    'insertEvent',
+    'insertMessageMap',
+    'insertRecipientEmail',
+    'insertSuppression',
+    'lookupRecipientEmail',
+  ],
+  ghost_ses_proxy_events_skipped_total: ['DeliveryDelay', 'Send', 'other'],
 };
 
 const ZERO_INIT_PROPERTIES: (keyof Metrics)[] = [
@@ -435,13 +458,13 @@ const ZERO_INIT_PROPERTIES: (keyof Metrics)[] = [
   'sqsParseErrorsTotal',
   'eventCorrelationTotal',
   'dbCleanupRunsTotal',
+  'dbErrorsTotal',
+  'eventsSkippedTotal',
 ];
 
 const EXCLUDED_FROM_ZERO_INIT = [
   'ghost_ses_proxy_http_requests_total',
   'ghost_ses_proxy_events_stored_total',
-  'ghost_ses_proxy_events_skipped_total',
-  'ghost_ses_proxy_db_errors_total',
   'ghost_ses_proxy_db_cleanup_deleted_rows_total',
 ];
 
@@ -490,7 +513,18 @@ describe('createMetrics — zero-initialised counters', () => {
     );
   });
 
-  it('adds exactly 31 child series', () => {
+  it('pairs each spec entry name with its own counter', () => {
+    const metrics = createMetrics(new Registry());
+
+    for (const { property, name } of ZERO_INIT_SPEC) {
+      expect(
+        (metrics[property] as unknown as MetricInternals).name,
+        `spec row ${property}`,
+      ).toBe(name);
+    }
+  });
+
+  it('adds exactly 40 child series', () => {
     const specTotal = ZERO_INIT_SPEC.reduce(
       (sum, entry) => sum + entry.values.length,
       0,
@@ -500,8 +534,8 @@ describe('createMetrics — zero-initialised counters', () => {
       0,
     );
 
-    expect(specTotal).toBe(31);
-    expect(oracleTotal).toBe(31);
+    expect(specTotal).toBe(40);
+    expect(oracleTotal).toBe(40);
   });
 
   it('seeds a child rather than offsetting its first increment', async () => {

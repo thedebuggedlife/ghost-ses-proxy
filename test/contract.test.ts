@@ -46,7 +46,10 @@ import { createApp } from '../src/app';
 import { runCleanup } from '../src/cleanup';
 import { loadConfig } from '../src/config';
 import { mapSesEvent } from '../src/event-mapper';
-import { SQS_PARSE_ERROR_REASONS } from '../src/metrics';
+import {
+  SKIPPED_SES_EVENT_TYPES,
+  SQS_PARSE_ERROR_REASONS,
+} from '../src/metrics';
 import { clampLimit } from '../src/routes/events';
 import { TABLE_NAMES } from '../src/schema';
 import { SqsPoller } from '../src/sqs-poller';
@@ -791,8 +794,13 @@ describe('intent/d7-malformed-payload.json (D7)', () => {
       // A malformed payload is a parse error, never a skip — the two must not
       // share a denominator (design §5.5).
       expect(
-        await metricValues(deps.register, 'ghost_ses_proxy_events_skipped_total'),
-      ).toEqual([]);
+        await normalisedChildren(
+          deps.register,
+          'ghost_ses_proxy_events_skipped_total',
+          'ses_event_type',
+          SKIPPED_SES_EVENT_TYPES,
+        ),
+      ).toEqual({ Send: 0, DeliveryDelay: 0, other: 0 });
       expect(
         await metricValues(deps.register, 'ghost_ses_proxy_events_stored_total'),
       ).toEqual([]);

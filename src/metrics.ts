@@ -5,8 +5,9 @@ import {
   collectDefaultMetrics,
   type Registry,
 } from 'prom-client';
+import { SKIP_TYPES } from './event-mapper';
 import { getVersion } from './logger';
-import type { Metrics, SuppressionType } from './types';
+import type { DbOperation, Metrics, SuppressionType } from './types';
 
 const PREFIX = 'ghost_ses_proxy_';
 
@@ -68,6 +69,17 @@ export const SQS_PARSE_ERROR_REASONS = [
 ] as const;
 export const EVENT_CORRELATION_RESULTS = ['matched', 'unmatched'] as const;
 export const CLEANUP_OUTCOMES = ['success', 'error'] as const;
+export const DB_OPERATIONS: readonly DbOperation[] = [
+  'insertMessageMap',
+  'insertRecipientEmail',
+  'insertEvent',
+  'insertSuppression',
+  'deleteSuppression',
+  'lookupRecipientEmail',
+] as const;
+
+/** The skip guard's own types plus `other`, the collapse label for unrecognized types. */
+export const SKIPPED_SES_EVENT_TYPES = [...SKIP_TYPES, 'other'] as const;
 
 export type SendOutcome = (typeof SEND_OUTCOMES)[number];
 export type RecipientOutcome = (typeof RECIPIENT_OUTCOMES)[number];
@@ -75,6 +87,8 @@ export type SqsPollOutcome = (typeof SQS_POLL_OUTCOMES)[number];
 export type SqsParseErrorReason = (typeof SQS_PARSE_ERROR_REASONS)[number];
 export type EventCorrelationResult = (typeof EVENT_CORRELATION_RESULTS)[number];
 export type CleanupOutcome = (typeof CLEANUP_OUTCOMES)[number];
+export type SkippedSesEventTypeLabel =
+  (typeof SKIPPED_SES_EVENT_TYPES)[number];
 
 /** Keys of `Metrics` whose value is a Counter — excludes the register, gauges and histograms. */
 type CounterKey = {
@@ -150,6 +164,18 @@ export const ZERO_INIT_SPEC: readonly ZeroInitEntry[] = [
     name: `${PREFIX}db_cleanup_runs_total`,
     label: 'outcome',
     values: CLEANUP_OUTCOMES,
+  },
+  {
+    property: 'dbErrorsTotal',
+    name: `${PREFIX}db_errors_total`,
+    label: 'operation',
+    values: DB_OPERATIONS,
+  },
+  {
+    property: 'eventsSkippedTotal',
+    name: `${PREFIX}events_skipped_total`,
+    label: 'ses_event_type',
+    values: SKIPPED_SES_EVENT_TYPES,
   },
 ];
 

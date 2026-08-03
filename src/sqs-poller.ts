@@ -13,6 +13,7 @@ import {
 } from './event-mapper';
 import type {
   EventCorrelationResult,
+  SkippedSesEventTypeLabel,
   SqsParseErrorReason,
   SqsPollOutcome,
 } from './metrics';
@@ -204,7 +205,9 @@ export class SqsPoller {
     const sesMessageId = sesEvent.mail?.messageId ?? null;
 
     if (isSkippedSesEventType(sesEventType)) {
-      metrics.eventsSkippedTotal.inc({ ses_event_type: sesEventType });
+      metrics.eventsSkippedTotal.inc({
+        ses_event_type: sesEventType satisfies SkippedSesEventTypeLabel,
+      });
       this.log.debug({ sesEventType, sesMessageId }, 'skipped SES event type');
       await this.deleteMessage(message.ReceiptHandle);
       return;
@@ -224,7 +227,9 @@ export class SqsPoller {
         );
       } else {
         // P10: an unbounded label fed by third-party JSON collapses to `other`.
-        metrics.eventsSkippedTotal.inc({ ses_event_type: 'other' });
+        metrics.eventsSkippedTotal.inc({
+          ses_event_type: 'other' satisfies SkippedSesEventTypeLabel,
+        });
         this.log.debug(
           { sesEventType, sesMessageId },
           'skipped unrecognized SES event type',

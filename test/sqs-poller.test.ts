@@ -6,7 +6,10 @@ import {
 import { mockClient } from 'aws-sdk-client-mock';
 import type { Registry } from 'prom-client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SQS_PARSE_ERROR_REASONS } from '../src/metrics';
+import {
+  SKIPPED_SES_EVENT_TYPES,
+  SQS_PARSE_ERROR_REASONS,
+} from '../src/metrics';
 import {
   POLL_ERROR_BACKOFF_MS,
   POLL_MAX_MESSAGES,
@@ -83,6 +86,15 @@ async function parseErrorReasons(): Promise<Record<string, number>> {
     'ghost_ses_proxy_sqs_parse_errors_total',
     'reason',
     SQS_PARSE_ERROR_REASONS,
+  );
+}
+
+async function skippedEventTypes(): Promise<Record<string, number>> {
+  return normalisedChildren(
+    deps.register,
+    'ghost_ses_proxy_events_skipped_total',
+    'ses_event_type',
+    SKIPPED_SES_EVENT_TYPES,
   );
 }
 
@@ -571,9 +583,11 @@ describe('SqsPoller malformed payloads (D7)', () => {
       expect(eventRows()).toHaveLength(0);
       expect(suppressionRows()).toHaveLength(0);
       expect(deleteCalls()).toBe(1);
-      expect(
-        await counterValue('ghost_ses_proxy_events_skipped_total'),
-      ).toBeUndefined();
+      expect(await skippedEventTypes()).toEqual({
+        Send: 0,
+        DeliveryDelay: 0,
+        other: 0,
+      });
       expect(await counterValue('ghost_ses_proxy_sqs_polls_total', {
         outcome: 'success',
       })).toBe(1);
