@@ -70,7 +70,7 @@ import {
   type SesStub,
   type TestDeps,
 } from './helpers/deps';
-import { sesEvent, sesFixtureNames } from './helpers/fixtures';
+import { rawSqsBody, sesEvent, sesFixtureNames } from './helpers/fixtures';
 import { normalisedChildren } from './helpers/metrics';
 import { normalize, normalizeValue } from './helpers/normalize';
 
@@ -847,4 +847,31 @@ describe('intent/d7-malformed-payload.json (D7)', () => {
       expect(sqsMock.commandCalls(DeleteMessageCommand)).toHaveLength(1);
     },
   );
+});
+
+describe('issue #8: zero-initialised counters transition 0 -> 1', () => {
+  it('moves suppressions_recorded_total{type="bounces"} from 0 to 1', async () => {
+    const deps = newDeps();
+    const poller = new SqsPoller(deps, injectedSqsClient());
+
+    expect(
+      await metricValue(
+        deps.register,
+        'ghost_ses_proxy_suppressions_recorded_total',
+        { type: 'bounces' },
+      ),
+    ).toBe(0);
+
+    queue(rawSqsBody('bounce-permanent'));
+    await poller.pollOnce();
+    poller.stop();
+
+    expect(
+      await metricValue(
+        deps.register,
+        'ghost_ses_proxy_suppressions_recorded_total',
+        { type: 'bounces' },
+      ),
+    ).toBe(1);
+  });
 });
