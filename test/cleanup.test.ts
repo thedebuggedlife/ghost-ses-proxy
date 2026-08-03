@@ -80,7 +80,7 @@ async function runOutcomes(register: Registry): Promise<Record<string, number>> 
   );
 }
 
-const eventRow =(overrides: Partial<EventRow> = {}): EventRow => ({
+const eventRow = (overrides: Partial<EventRow> = {}): EventRow => ({
   id: 'evt-0001',
   event_type: 'delivered',
   severity: null,
