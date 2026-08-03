@@ -7,6 +7,10 @@ import { mockClient } from 'aws-sdk-client-mock';
 import type { Registry } from 'prom-client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  SKIPPED_SES_EVENT_TYPES,
+  SQS_PARSE_ERROR_REASONS,
+} from '../src/metrics';
+import {
   POLL_ERROR_BACKOFF_MS,
   POLL_MAX_MESSAGES,
   POLL_WAIT_TIME_SECONDS,
@@ -18,6 +22,7 @@ import type { EventRow } from '../src/types';
 import d3Fixture from './golden/intent/d3-redelivery-dedupe.json';
 import d7Fixture from './golden/intent/d7-malformed-payload.json';
 import { makeDeps, type TestDeps } from './helpers/deps';
+import { normalisedChildren } from './helpers/metrics';
 import {
   rawSqsBody,
   sesEvent,
@@ -73,6 +78,24 @@ async function counterValue(
   return values.find((entry) =>
     Object.entries(labels).every(([key, value]) => entry.labels[key] === value),
   )?.value;
+}
+
+async function parseErrorReasons(): Promise<Record<string, number>> {
+  return normalisedChildren(
+    deps.register,
+    'ghost_ses_proxy_sqs_parse_errors_total',
+    'reason',
+    SQS_PARSE_ERROR_REASONS,
+  );
+}
+
+async function skippedEventTypes(): Promise<Record<string, number>> {
+  return normalisedChildren(
+    deps.register,
+    'ghost_ses_proxy_events_skipped_total',
+    'ses_event_type',
+    SKIPPED_SES_EVENT_TYPES,
+  );
 }
 
 async function histogramCount(name: string): Promise<number | undefined> {
@@ -513,9 +536,11 @@ describe('SqsPoller skip path', () => {
       ).toBe(1);
       expect(eventRows()).toHaveLength(0);
       expect(deleteCalls()).toBe(1);
-      expect(
-        await counterValue('ghost_ses_proxy_sqs_parse_errors_total'),
-      ).toBeUndefined();
+      expect(await parseErrorReasons()).toEqual({
+        invalid_json: 0,
+        unrecognized_format: 0,
+        malformed_payload: 0,
+      });
     },
   );
 
@@ -529,9 +554,11 @@ describe('SqsPoller skip path', () => {
         ses_event_type: 'other',
       }),
     ).toBe(1);
-    expect(
-      await counterValue('ghost_ses_proxy_sqs_parse_errors_total'),
-    ).toBeUndefined();
+    expect(await parseErrorReasons()).toEqual({
+      invalid_json: 0,
+      unrecognized_format: 0,
+      malformed_payload: 0,
+    });
     expect(deleteCalls()).toBe(1);
   });
 });
@@ -556,9 +583,11 @@ describe('SqsPoller malformed payloads (D7)', () => {
       expect(eventRows()).toHaveLength(0);
       expect(suppressionRows()).toHaveLength(0);
       expect(deleteCalls()).toBe(1);
-      expect(
-        await counterValue('ghost_ses_proxy_events_skipped_total'),
-      ).toBeUndefined();
+      expect(await skippedEventTypes()).toEqual({
+        Send: 0,
+        DeliveryDelay: 0,
+        other: 0,
+      });
       expect(await counterValue('ghost_ses_proxy_sqs_polls_total', {
         outcome: 'success',
       })).toBe(1);

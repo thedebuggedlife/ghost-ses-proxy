@@ -8,9 +8,10 @@ import {
 } from '../src/cleanup';
 import { createDb } from '../src/db';
 import { createLogger } from '../src/logger';
-import { createMetrics } from '../src/metrics';
+import { CLEANUP_OUTCOMES, createMetrics } from '../src/metrics';
 import { TABLE_NAMES } from '../src/schema';
 import type { Config, Db, EventRow, Metrics } from '../src/types';
+import { normalisedChildren } from './helpers/metrics';
 
 const config: Config = {
   port: 3003,
@@ -68,6 +69,15 @@ async function labelledValues(
     labels: Record<string, string | number>;
     value: number;
   }[];
+}
+
+async function runOutcomes(register: Registry): Promise<Record<string, number>> {
+  return normalisedChildren(
+    register,
+    'ghost_ses_proxy_db_cleanup_runs_total',
+    'outcome',
+    CLEANUP_OUTCOMES,
+  );
 }
 
 const eventRow = (overrides: Partial<EventRow> = {}): EventRow => ({
@@ -259,18 +269,10 @@ describe('runCleanup', () => {
     seedAgedRows(db);
 
     runCleanup(db, logger, metrics);
-    const after1 = await labelledValues(
-      register,
-      'ghost_ses_proxy_db_cleanup_runs_total',
-    );
-    expect(after1).toEqual([{ labels: { outcome: 'success' }, value: 1 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 1, error: 0 });
 
     runCleanup(db, logger, metrics);
-    const after2 = await labelledValues(
-      register,
-      'ghost_ses_proxy_db_cleanup_runs_total',
-    );
-    expect(after2).toEqual([{ labels: { outcome: 'success' }, value: 2 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 2, error: 0 });
   });
 
   it('records a zero delta when nothing is old enough', async () => {
@@ -316,9 +318,7 @@ describe('runCleanup', () => {
 
     expect(() => runCleanup(db, logger, metrics)).not.toThrow();
 
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([{ labels: { outcome: 'error' }, value: 1 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 0, error: 1 });
 
     const line = lines.find((l) => l.msg === 'retention cleanup failed');
     expect(line?.level).toBe('error');
@@ -354,9 +354,7 @@ describe('scheduleCleanup', () => {
     const timer = scheduleCleanup(db, logger, metrics, 1000);
 
     expect(keysIn(db, 'message_map', 'batch_message_id')).toHaveLength(2);
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([]);
+    expect(await runOutcomes(register)).toEqual({ success: 0, error: 0 });
     clearInterval(timer);
   });
 
@@ -373,9 +371,7 @@ describe('scheduleCleanup', () => {
     expect(keysIn(db, 'message_map', 'batch_message_id')).toEqual([
       '<new-batch@example.com>',
     ]);
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([{ labels: { outcome: 'success' }, value: 1 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 1, error: 0 });
     clearInterval(timer);
   });
 
@@ -386,9 +382,7 @@ describe('scheduleCleanup', () => {
     const timer = scheduleCleanup(db, logger, metrics, 1000);
     vi.advanceTimersByTime(3000);
 
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([{ labels: { outcome: 'success' }, value: 3 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 3, error: 0 });
     clearInterval(timer);
   });
 
@@ -401,9 +395,7 @@ describe('scheduleCleanup', () => {
     clearInterval(timer);
     vi.advanceTimersByTime(10_000);
 
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([{ labels: { outcome: 'success' }, value: 1 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 1, error: 0 });
   });
 
   it('defaults to a 24-hour interval', async () => {
@@ -412,14 +404,10 @@ describe('scheduleCleanup', () => {
 
     const timer = scheduleCleanup(db, logger, metrics);
     vi.advanceTimersByTime(86_399_999);
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([]);
+    expect(await runOutcomes(register)).toEqual({ success: 0, error: 0 });
 
     vi.advanceTimersByTime(1);
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_cleanup_runs_total'),
-    ).toEqual([{ labels: { outcome: 'success' }, value: 1 }]);
+    expect(await runOutcomes(register)).toEqual({ success: 1, error: 0 });
     clearInterval(timer);
   });
 });

@@ -5,8 +5,9 @@ import {
   collectDefaultMetrics,
   type Registry,
 } from 'prom-client';
+import { SKIP_TYPES } from './event-mapper';
 import { getVersion } from './logger';
-import type { Metrics } from './types';
+import type { DbOperation, Metrics, SuppressionType } from './types';
 
 const PREFIX = 'ghost_ses_proxy_';
 
@@ -46,6 +47,142 @@ export type SesErrorType = (typeof SES_ERROR_TYPES)[number] | 'other';
 export function toSesErrorType(name: string | undefined | null): SesErrorType {
   const match = SES_ERROR_TYPES.find((known) => known === name);
   return match ?? 'other';
+}
+
+export const SEND_OUTCOMES = [
+  'success',
+  'partial',
+  'failure',
+  'rejected',
+] as const;
+export const RECIPIENT_OUTCOMES = ['sent', 'failed'] as const;
+export const SUPPRESSION_TYPES: readonly SuppressionType[] = [
+  'bounces',
+  'complaints',
+  'unsubscribes',
+] as const;
+export const SQS_POLL_OUTCOMES = ['success', 'error'] as const;
+export const SQS_PARSE_ERROR_REASONS = [
+  'invalid_json',
+  'unrecognized_format',
+  'malformed_payload',
+] as const;
+export const EVENT_CORRELATION_RESULTS = ['matched', 'unmatched'] as const;
+export const CLEANUP_OUTCOMES = ['success', 'error'] as const;
+export const DB_OPERATIONS: readonly DbOperation[] = [
+  'insertMessageMap',
+  'insertRecipientEmail',
+  'insertEvent',
+  'insertSuppression',
+  'deleteSuppression',
+  'lookupRecipientEmail',
+] as const;
+
+/** The skip guard's own types plus `other`, the collapse label for unrecognized types. */
+export const SKIPPED_SES_EVENT_TYPES = [...SKIP_TYPES, 'other'] as const;
+
+export type SendOutcome = (typeof SEND_OUTCOMES)[number];
+export type RecipientOutcome = (typeof RECIPIENT_OUTCOMES)[number];
+export type SqsPollOutcome = (typeof SQS_POLL_OUTCOMES)[number];
+export type SqsParseErrorReason = (typeof SQS_PARSE_ERROR_REASONS)[number];
+export type EventCorrelationResult = (typeof EVENT_CORRELATION_RESULTS)[number];
+export type CleanupOutcome = (typeof CLEANUP_OUTCOMES)[number];
+export type SkippedSesEventTypeLabel =
+  (typeof SKIPPED_SES_EVENT_TYPES)[number];
+
+/** Keys of `Metrics` whose value is a Counter — excludes the register, gauges and histograms. */
+type CounterKey = {
+  [K in keyof Metrics]: Metrics[K] extends Counter<string> ? K : never;
+}[keyof Metrics];
+
+export interface ZeroInitEntry {
+  property: CounterKey;
+  /** Exposed metric name; read by the `/metrics` scrape test, so it is not duplicated in tests. */
+  name: string;
+  label: string;
+  values: readonly string[];
+}
+
+/** Every bounded-label counter and the exhaustive child set to pre-create at 0. */
+export const ZERO_INIT_SPEC: readonly ZeroInitEntry[] = [
+  {
+    property: 'sendBatchesTotal',
+    name: `${PREFIX}send_batches_total`,
+    label: 'outcome',
+    values: SEND_OUTCOMES,
+  },
+  {
+    property: 'sendRecipientsTotal',
+    name: `${PREFIX}send_recipients_total`,
+    label: 'outcome',
+    values: RECIPIENT_OUTCOMES,
+  },
+  {
+    property: 'sesErrorsTotal',
+    name: `${PREFIX}ses_errors_total`,
+    label: 'error_type',
+    values: [...SES_ERROR_TYPES, 'other'],
+  },
+  {
+    property: 'suppressionsRecordedTotal',
+    name: `${PREFIX}suppressions_recorded_total`,
+    label: 'type',
+    values: SUPPRESSION_TYPES,
+  },
+  {
+    property: 'suppressionsRemovedTotal',
+    name: `${PREFIX}suppressions_removed_total`,
+    label: 'type',
+    values: SUPPRESSION_TYPES,
+  },
+  {
+    property: 'sqsPollsTotal',
+    name: `${PREFIX}sqs_polls_total`,
+    label: 'outcome',
+    values: SQS_POLL_OUTCOMES,
+  },
+  {
+    property: 'sqsMessagesDeletedTotal',
+    name: `${PREFIX}sqs_messages_deleted_total`,
+    label: 'outcome',
+    values: SQS_POLL_OUTCOMES,
+  },
+  {
+    property: 'sqsParseErrorsTotal',
+    name: `${PREFIX}sqs_parse_errors_total`,
+    label: 'reason',
+    values: SQS_PARSE_ERROR_REASONS,
+  },
+  {
+    property: 'eventCorrelationTotal',
+    name: `${PREFIX}event_correlation_total`,
+    label: 'result',
+    values: EVENT_CORRELATION_RESULTS,
+  },
+  {
+    property: 'dbCleanupRunsTotal',
+    name: `${PREFIX}db_cleanup_runs_total`,
+    label: 'outcome',
+    values: CLEANUP_OUTCOMES,
+  },
+  {
+    property: 'dbErrorsTotal',
+    name: `${PREFIX}db_errors_total`,
+    label: 'operation',
+    values: DB_OPERATIONS,
+  },
+  {
+    property: 'eventsSkippedTotal',
+    name: `${PREFIX}events_skipped_total`,
+    label: 'ses_event_type',
+    values: SKIPPED_SES_EVENT_TYPES,
+  },
+];
+
+function zeroInitialise(metrics: Metrics): void {
+  for (const { property, label, values } of ZERO_INIT_SPEC) {
+    for (const value of values) metrics[property].inc({ [label]: value }, 0);
+  }
 }
 
 export function createMetrics(register: Registry): Metrics {
@@ -228,6 +365,8 @@ export function createMetrics(register: Registry): Metrics {
     { version: getVersion(), node_version: process.version },
     1,
   );
+
+  zeroInitialise(metrics);
 
   return metrics;
 }

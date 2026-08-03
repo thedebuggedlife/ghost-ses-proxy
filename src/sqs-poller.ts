@@ -11,6 +11,12 @@ import {
   isSkippedSesEventType,
   mapSesEvent,
 } from './event-mapper';
+import type {
+  EventCorrelationResult,
+  SkippedSesEventTypeLabel,
+  SqsParseErrorReason,
+  SqsPollOutcome,
+} from './metrics';
 import type { Deps, NormalizedEvent, SesEvent } from './types';
 
 export const POLL_WAIT_TIME_SECONDS = 20;
@@ -114,13 +120,17 @@ export class SqsPoller {
         }
       }
 
-      metrics.sqsPollsTotal.inc({ outcome: 'success' });
+      metrics.sqsPollsTotal.inc({
+        outcome: 'success' satisfies SqsPollOutcome,
+      });
       metrics.sqsLastPollTimestampSeconds.set(Date.now() / 1000);
       metrics.sqsPollDurationSeconds.observe(
         (performance.now() - startedAt) / 1000,
       );
     } catch (err) {
-      metrics.sqsPollsTotal.inc({ outcome: 'error' });
+      metrics.sqsPollsTotal.inc({
+        outcome: 'error' satisfies SqsPollOutcome,
+      });
       metrics.sqsPollDurationSeconds.observe(
         (performance.now() - startedAt) / 1000,
       );
@@ -174,14 +184,18 @@ export class SqsPoller {
     try {
       sesEvent = parseSqsBody(message.Body ?? '');
     } catch (err) {
-      metrics.sqsParseErrorsTotal.inc({ reason: 'invalid_json' });
+      metrics.sqsParseErrorsTotal.inc({
+        reason: 'invalid_json' satisfies SqsParseErrorReason,
+      });
       this.log.warn({ err }, 'failed to parse SQS message body');
       await this.deleteMessage(message.ReceiptHandle);
       return;
     }
 
     if (!sesEvent) {
-      metrics.sqsParseErrorsTotal.inc({ reason: 'unrecognized_format' });
+      metrics.sqsParseErrorsTotal.inc({
+        reason: 'unrecognized_format' satisfies SqsParseErrorReason,
+      });
       this.log.warn('unrecognized SQS message format');
       await this.deleteMessage(message.ReceiptHandle);
       return;
@@ -191,7 +205,9 @@ export class SqsPoller {
     const sesMessageId = sesEvent.mail?.messageId ?? null;
 
     if (isSkippedSesEventType(sesEventType)) {
-      metrics.eventsSkippedTotal.inc({ ses_event_type: sesEventType });
+      metrics.eventsSkippedTotal.inc({
+        ses_event_type: sesEventType satisfies SkippedSesEventTypeLabel,
+      });
       this.log.debug({ sesEventType, sesMessageId }, 'skipped SES event type');
       await this.deleteMessage(message.ReceiptHandle);
       return;
@@ -202,14 +218,18 @@ export class SqsPoller {
     if (normalized.length === 0) {
       if (isRecognizedSesEventType(sesEventType)) {
         // D7 (design §5.5): a defect in the input, deliberately not a skip.
-        metrics.sqsParseErrorsTotal.inc({ reason: 'malformed_payload' });
+        metrics.sqsParseErrorsTotal.inc({
+          reason: 'malformed_payload' satisfies SqsParseErrorReason,
+        });
         this.log.warn(
           { sesEventType, sesMessageId },
           'malformed SES payload: recognized event type produced no events',
         );
       } else {
         // P10: an unbounded label fed by third-party JSON collapses to `other`.
-        metrics.eventsSkippedTotal.inc({ ses_event_type: 'other' });
+        metrics.eventsSkippedTotal.inc({
+          ses_event_type: 'other' satisfies SkippedSesEventTypeLabel,
+        });
         this.log.debug(
           { sesEventType, sesMessageId },
           'skipped unrecognized SES event type',
@@ -245,11 +265,15 @@ export class SqsPoller {
       batchMessageId = stripAngleBrackets(row.batch_message_id);
       ghostEmailId = row.ghost_email_id || ghostEmailId;
       tags = row.tags;
-      metrics.eventCorrelationTotal.inc({ result: 'matched' });
+      metrics.eventCorrelationTotal.inc({
+        result: 'matched' satisfies EventCorrelationResult,
+      });
     } else {
       // P10: an event with no ses_message_id gets no lookup at all, but still
       // belongs in the correlation denominator (design §4.7).
-      metrics.eventCorrelationTotal.inc({ result: 'unmatched' });
+      metrics.eventCorrelationTotal.inc({
+        result: 'unmatched' satisfies EventCorrelationResult,
+      });
     }
 
     db.insertEvent({
@@ -312,9 +336,13 @@ export class SqsPoller {
           ReceiptHandle: receiptHandle,
         }),
       );
-      metrics.sqsMessagesDeletedTotal.inc({ outcome: 'success' });
+      metrics.sqsMessagesDeletedTotal.inc({
+        outcome: 'success' satisfies SqsPollOutcome,
+      });
     } catch (err) {
-      metrics.sqsMessagesDeletedTotal.inc({ outcome: 'error' });
+      metrics.sqsMessagesDeletedTotal.inc({
+        outcome: 'error' satisfies SqsPollOutcome,
+      });
       this.log.error({ err }, 'failed to delete SQS message');
     }
   }

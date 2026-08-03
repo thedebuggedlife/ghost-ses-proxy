@@ -46,6 +46,10 @@ import { createApp } from '../src/app';
 import { runCleanup } from '../src/cleanup';
 import { loadConfig } from '../src/config';
 import { mapSesEvent } from '../src/event-mapper';
+import {
+  SKIPPED_SES_EVENT_TYPES,
+  SQS_PARSE_ERROR_REASONS,
+} from '../src/metrics';
 import { clampLimit } from '../src/routes/events';
 import { TABLE_NAMES } from '../src/schema';
 import { SqsPoller } from '../src/sqs-poller';
@@ -69,7 +73,8 @@ import {
   type SesStub,
   type TestDeps,
 } from './helpers/deps';
-import { sesEvent, sesFixtureNames } from './helpers/fixtures';
+import { rawSqsBody, sesEvent, sesFixtureNames } from './helpers/fixtures';
+import { normalisedChildren } from './helpers/metrics';
 import { normalize, normalizeValue } from './helpers/normalize';
 
 // --- Fixture access ---------------------------------------------------------
@@ -789,8 +794,13 @@ describe('intent/d7-malformed-payload.json (D7)', () => {
       // A malformed payload is a parse error, never a skip — the two must not
       // share a denominator (design §5.5).
       expect(
-        await metricValues(deps.register, 'ghost_ses_proxy_events_skipped_total'),
-      ).toEqual([]);
+        await normalisedChildren(
+          deps.register,
+          'ghost_ses_proxy_events_skipped_total',
+          'ses_event_type',
+          SKIPPED_SES_EVENT_TYPES,
+        ),
+      ).toEqual({ Send: 0, DeliveryDelay: 0, other: 0 });
       expect(
         await metricValues(deps.register, 'ghost_ses_proxy_events_stored_total'),
       ).toEqual([]);
@@ -831,12 +841,45 @@ describe('intent/d7-malformed-payload.json (D7)', () => {
         ),
       ).toBe(1);
       expect(
-        await metricValues(
+        await normalisedChildren(
           deps.register,
           'ghost_ses_proxy_sqs_parse_errors_total',
+          'reason',
+          SQS_PARSE_ERROR_REASONS,
         ),
-      ).toEqual([]);
+      ).toEqual({
+        invalid_json: 0,
+        unrecognized_format: 0,
+        malformed_payload: 0,
+      });
       expect(sqsMock.commandCalls(DeleteMessageCommand)).toHaveLength(1);
     },
   );
+});
+
+describe('issue #8: zero-initialised counters transition 0 -> 1', () => {
+  it('moves suppressions_recorded_total{type="bounces"} from 0 to 1', async () => {
+    const deps = newDeps();
+    const poller = new SqsPoller(deps, injectedSqsClient());
+
+    expect(
+      await metricValue(
+        deps.register,
+        'ghost_ses_proxy_suppressions_recorded_total',
+        { type: 'bounces' },
+      ),
+    ).toBe(0);
+
+    queue(rawSqsBody('bounce-permanent'));
+    await poller.pollOnce();
+    poller.stop();
+
+    expect(
+      await metricValue(
+        deps.register,
+        'ghost_ses_proxy_suppressions_recorded_total',
+        { type: 'bounces' },
+      ),
+    ).toBe(1);
+  });
 });

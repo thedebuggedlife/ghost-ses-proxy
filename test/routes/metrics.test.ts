@@ -3,6 +3,7 @@ import { Gauge } from 'prom-client';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app';
+import { ZERO_INIT_SPEC } from '../../src/metrics';
 import { createMetricsRoute } from '../../src/routes/metrics';
 import { makeDeps, type TestDeps } from '../helpers/deps';
 
@@ -114,6 +115,30 @@ describe('GET /metrics', () => {
     expect(deps.logs().filter((line) => line['responseTime'] !== undefined)).toEqual(
       [],
     );
+  });
+
+  it('exposes the issue #8 series at 0 on a cold app, before any traffic', async () => {
+    const res = await request(app).get('/metrics');
+
+    expect(res.text).toContain(
+      'ghost_ses_proxy_send_batches_total{outcome="failure"} 0',
+    );
+    expect(res.text).toContain(
+      'ghost_ses_proxy_send_batches_total{outcome="partial"} 0',
+    );
+    expect(res.text).toContain(
+      'ghost_ses_proxy_suppressions_recorded_total{type="bounces"} 0',
+    );
+  });
+
+  it('exposes every zero-initialised child at 0 on a cold app', async () => {
+    const res = await request(app).get('/metrics');
+
+    for (const { name, label, values } of ZERO_INIT_SPEC) {
+      for (const value of values) {
+        expect(res.text).toContain(`${name}{${label}="${value}"} 0`);
+      }
+    }
   });
 
   it('forwards a collection failure to the error handler', async () => {

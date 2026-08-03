@@ -2,8 +2,9 @@ import { Registry } from 'prom-client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDb } from '../src/db';
 import { createLogger } from '../src/logger';
-import { createMetrics } from '../src/metrics';
+import { DB_OPERATIONS, createMetrics } from '../src/metrics';
 import { INDEX_NAMES, TABLE_NAMES } from '../src/schema';
+import { normalisedChildren } from './helpers/metrics';
 import type { Config, Db, EventRow, Metrics } from '../src/types';
 
 const config: Config = {
@@ -49,18 +50,25 @@ afterEach(() => {
   }
 });
 
-async function labelledValues(
+async function dbErrorOperations(
   register: Registry,
-  name: string,
-): Promise<{ labels: Record<string, string | number>; value: number }[]> {
-  const json = await register.getMetricsAsJSON();
-  const metric = json.find((entry) => entry.name === name);
-  const values = (metric as { values?: unknown } | undefined)?.values;
-  return (values ?? []) as {
-    labels: Record<string, string | number>;
-    value: number;
-  }[];
+): Promise<Record<string, number>> {
+  return normalisedChildren(
+    register,
+    'ghost_ses_proxy_db_errors_total',
+    'operation',
+    DB_OPERATIONS,
+  );
 }
+
+const NO_DB_ERRORS: Record<string, number> = {
+  insertMessageMap: 0,
+  insertRecipientEmail: 0,
+  insertEvent: 0,
+  insertSuppression: 0,
+  deleteSuppression: 0,
+  lookupRecipientEmail: 0,
+};
 
 const eventRow = (overrides: Partial<EventRow> = {}): EventRow => ({
   id: 'evt-0001',
@@ -232,10 +240,10 @@ describe('createDb — statement failures', () => {
 
     expect(() => db.insertEvent(eventRow())).toThrow(/no such table: events/);
 
-    const values = await labelledValues(register, 'ghost_ses_proxy_db_errors_total');
-    expect(values).toHaveLength(1);
-    expect(values[0]?.labels).toEqual({ operation: 'insertEvent' });
-    expect(values[0]?.value).toBe(1);
+    expect(await dbErrorOperations(register)).toEqual({
+      ...NO_DB_ERRORS,
+      insertEvent: 1,
+    });
 
     const errorLine = lines.find((line) => line.level === 'error');
     expect(errorLine).toMatchObject({
@@ -252,8 +260,10 @@ describe('createDb — statement failures', () => {
 
     expect(() => db.lookupRecipientEmail('ses-1')).toThrow();
 
-    const values = await labelledValues(register, 'ghost_ses_proxy_db_errors_total');
-    expect(values.map((v) => v.labels.operation)).toEqual(['lookupRecipientEmail']);
+    expect(await dbErrorOperations(register)).toEqual({
+      ...NO_DB_ERRORS,
+      lookupRecipientEmail: 1,
+    });
   });
 
   it('does not count a constraint violation — INSERT OR IGNORE swallows it', async () => {
@@ -270,9 +280,7 @@ describe('createDb — statement failures', () => {
     ).not.toThrow();
 
     expect(db.raw.prepare('SELECT * FROM recipient_emails').all()).toHaveLength(0);
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_errors_total'),
-    ).toHaveLength(0);
+    expect(await dbErrorOperations(register)).toEqual(NO_DB_ERRORS);
   });
 
   it('draws the operation label only from the bounded statement set', async () => {
@@ -282,10 +290,11 @@ describe('createDb — statement failures', () => {
     expect(() => db.insertSuppression('a@example.com', 'bounces', null)).toThrow();
     expect(() => db.deleteSuppression('a@example.com', 'bounces')).toThrow();
 
-    const values = await labelledValues(register, 'ghost_ses_proxy_db_errors_total');
-    expect(new Set(values.map((v) => v.labels.operation))).toEqual(
-      new Set(['insertSuppression', 'deleteSuppression']),
-    );
+    expect(await dbErrorOperations(register)).toEqual({
+      ...NO_DB_ERRORS,
+      insertSuppression: 1,
+      deleteSuppression: 1,
+    });
   });
 
   it('does not increment db_errors_total on success', async () => {
@@ -294,8 +303,6 @@ describe('createDb — statement failures', () => {
     db.insertSuppression('a@example.com', 'bounces', null);
     db.deleteSuppression('a@example.com', 'bounces');
 
-    expect(
-      await labelledValues(register, 'ghost_ses_proxy_db_errors_total'),
-    ).toHaveLength(0);
+    expect(await dbErrorOperations(register)).toEqual(NO_DB_ERRORS);
   });
 });

@@ -1,9 +1,18 @@
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app';
+import { SUPPRESSION_TYPES } from '../../src/metrics';
+import type { SuppressionType } from '../../src/types';
 import { makeDeps, type TestDeps } from '../helpers/deps';
+import { normalisedChildren } from '../helpers/metrics';
 
 const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
+
+const EMAIL_BY_TYPE: Record<SuppressionType, string> = {
+  bounces: 'bounced%2Btag%40example.com',
+  complaints: 'complainer%40example.com',
+  unsubscribes: 'unsub%40example.com',
+};
 
 interface CountRow {
   c: number;
@@ -31,18 +40,13 @@ describe('DELETE /v3/:domain/:type/:email', () => {
     ).c;
   }
 
-  async function removedCounts(): Promise<
-    { labels: Record<string, string | number>; value: number }[]
-  > {
-    const json = await deps.register.getMetricsAsJSON();
-    const metric = json.find(
-      (entry) => entry.name === 'ghost_ses_proxy_suppressions_removed_total',
+  async function removedCounts(): Promise<Record<string, number>> {
+    return normalisedChildren(
+      deps.register,
+      'ghost_ses_proxy_suppressions_removed_total',
+      'type',
+      SUPPRESSION_TYPES,
     );
-    const values = (metric as { values?: unknown } | undefined)?.values;
-    return (values ?? []) as {
-      labels: Record<string, string | number>;
-      value: number;
-    }[];
   }
 
   it('deletes the row and returns the Mailgun body', async () => {
@@ -62,13 +66,9 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   it('accepts every valid suppression type', async () => {
     const app = createApp(deps);
 
-    for (const [type, email] of [
-      ['bounces', 'bounced%2Btag%40example.com'],
-      ['complaints', 'complainer%40example.com'],
-      ['unsubscribes', 'unsub%40example.com'],
-    ] as const) {
+    for (const type of SUPPRESSION_TYPES) {
       const res = await request(app)
-        .delete(`/v3/example.com/${type}/${email}`)
+        .delete(`/v3/example.com/${type}/${EMAIL_BY_TYPE[type]}`)
         .set('Authorization', AUTH);
       expect(res.status).toBe(200);
     }
@@ -93,7 +93,11 @@ describe('DELETE /v3/:domain/:type/:email', () => {
       .delete('/v3/example.com/unsubscribed/complainer%40example.com')
       .set('Authorization', AUTH);
 
-    expect(await removedCounts()).toEqual([]);
+    expect(await removedCounts()).toEqual({
+      bounces: 0,
+      complaints: 0,
+      unsubscribes: 0,
+    });
   });
 
   it('decodes a %40-encoded address', async () => {
@@ -151,18 +155,23 @@ describe('DELETE /v3/:domain/:type/:email', () => {
       .delete('/v3/example.com/complaints/complainer%40example.com')
       .set('Authorization', AUTH);
 
-    expect(await removedCounts()).toEqual([
-      { labels: { type: 'bounces' }, value: 1 },
-      { labels: { type: 'complaints' }, value: 1 },
-    ]);
+    expect(await removedCounts()).toEqual({
+      bounces: 1,
+      complaints: 1,
+      unsubscribes: 0,
+    });
   });
 
-  it('does not create a series when nothing was removed', async () => {
+  it('does not increment when nothing was removed', async () => {
     await request(createApp(deps))
       .delete('/v3/example.com/bounces/nobody%40example.com')
       .set('Authorization', AUTH);
 
-    expect(await removedCounts()).toEqual([]);
+    expect(await removedCounts()).toEqual({
+      bounces: 0,
+      complaints: 0,
+      unsubscribes: 0,
+    });
   });
 
   it('logs the removal with component and recipient', async () => {

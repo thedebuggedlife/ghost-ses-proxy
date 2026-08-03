@@ -1,13 +1,16 @@
 import { Registry, register as globalRegister } from 'prom-client';
 import { describe, expect, it } from 'vitest';
 import {
+  DB_OPERATIONS,
   HTTP_DURATION_BUCKETS,
   SEND_BATCH_RECIPIENT_BUCKETS,
   SES_ERROR_TYPES,
+  SUPPRESSION_TYPES,
+  ZERO_INIT_SPEC,
   createMetrics,
   toSesErrorType,
 } from '../src/metrics';
-import type { Metrics } from '../src/types';
+import type { DbOperation, Metrics, SuppressionType } from '../src/types';
 import pkg from '../package.json';
 
 interface CatalogEntry {
@@ -363,4 +366,215 @@ describe('toSesErrorType', () => {
       'TimeoutError',
     ]);
   });
+});
+
+describe('label-value enumerations', () => {
+  it('SUPPRESSION_TYPES enumerates the SuppressionType union exhaustively', () => {
+    const exhaustive: Record<SuppressionType, true> = {
+      bounces: true,
+      complaints: true,
+      unsubscribes: true,
+    };
+
+    expect([...SUPPRESSION_TYPES].sort()).toEqual(
+      Object.keys(exhaustive).sort(),
+    );
+  });
+
+  it('DB_OPERATIONS enumerates the DbOperation union exhaustively', () => {
+    const exhaustive: Record<DbOperation, true> = {
+      insertMessageMap: true,
+      insertRecipientEmail: true,
+      insertEvent: true,
+      insertSuppression: true,
+      deleteSuppression: true,
+      lookupRecipientEmail: true,
+    };
+
+    expect([...DB_OPERATIONS].sort()).toEqual(Object.keys(exhaustive).sort());
+  });
+});
+
+/**
+ * The full zero-initialised child set, written out literally so a wrong `values`
+ * array in ZERO_INIT_SPEC cannot validate itself. Values are ASCII-sorted.
+ */
+const ZERO_INIT_ORACLE: Record<string, string[]> = {
+  ghost_ses_proxy_send_batches_total: [
+    'failure',
+    'partial',
+    'rejected',
+    'success',
+  ],
+  ghost_ses_proxy_send_recipients_total: ['failed', 'sent'],
+  ghost_ses_proxy_ses_errors_total: [
+    'AccountSendingPausedException',
+    'ConfigurationSetDoesNotExistException',
+    'LimitExceededException',
+    'MailFromDomainNotVerifiedException',
+    'MessageRejected',
+    'Throttling',
+    'TimeoutError',
+    'other',
+  ],
+  ghost_ses_proxy_suppressions_recorded_total: [
+    'bounces',
+    'complaints',
+    'unsubscribes',
+  ],
+  ghost_ses_proxy_suppressions_removed_total: [
+    'bounces',
+    'complaints',
+    'unsubscribes',
+  ],
+  ghost_ses_proxy_sqs_polls_total: ['error', 'success'],
+  ghost_ses_proxy_sqs_messages_deleted_total: ['error', 'success'],
+  ghost_ses_proxy_sqs_parse_errors_total: [
+    'invalid_json',
+    'malformed_payload',
+    'unrecognized_format',
+  ],
+  ghost_ses_proxy_event_correlation_total: ['matched', 'unmatched'],
+  ghost_ses_proxy_db_cleanup_runs_total: ['error', 'success'],
+  ghost_ses_proxy_db_errors_total: [
+    'deleteSuppression',
+    'insertEvent',
+    'insertMessageMap',
+    'insertRecipientEmail',
+    'insertSuppression',
+    'lookupRecipientEmail',
+  ],
+  ghost_ses_proxy_events_skipped_total: ['DeliveryDelay', 'Send', 'other'],
+};
+
+const ZERO_INIT_PROPERTIES: (keyof Metrics)[] = [
+  'sendBatchesTotal',
+  'sendRecipientsTotal',
+  'sesErrorsTotal',
+  'suppressionsRecordedTotal',
+  'suppressionsRemovedTotal',
+  'sqsPollsTotal',
+  'sqsMessagesDeletedTotal',
+  'sqsParseErrorsTotal',
+  'eventCorrelationTotal',
+  'dbCleanupRunsTotal',
+  'dbErrorsTotal',
+  'eventsSkippedTotal',
+];
+
+const EXCLUDED_FROM_ZERO_INIT = [
+  'ghost_ses_proxy_http_requests_total',
+  'ghost_ses_proxy_events_stored_total',
+  'ghost_ses_proxy_db_cleanup_deleted_rows_total',
+];
+
+async function childrenOf(
+  register: Registry,
+  name: string,
+): Promise<{ labels: Record<string, string | number>; value: number }[]> {
+  const json = await register.getMetricsAsJSON();
+  const metric = json.find((m) => m.name === name);
+  expect(metric, `metric ${name} is not registered`).toBeDefined();
+  return (metric?.values ?? []) as {
+    labels: Record<string, string | number>;
+    value: number;
+  }[];
+}
+
+describe('createMetrics — zero-initialised counters', () => {
+  it.each(Object.keys(ZERO_INIT_ORACLE))(
+    'pre-creates every %s child at 0',
+    async (name) => {
+      const register = new Registry();
+      createMetrics(register);
+
+      const children = await childrenOf(register, name);
+      const labelValues = children.map((child) => {
+        expect(Object.keys(child.labels)).toHaveLength(1);
+        return String(Object.values(child.labels)[0]);
+      });
+
+      expect([...labelValues].sort()).toEqual(ZERO_INIT_ORACLE[name]);
+      for (const child of children) {
+        expect(child.value, `${name} ${JSON.stringify(child.labels)}`).toBe(0);
+      }
+    },
+  );
+
+  it('covers exactly the intended counters', () => {
+    expect(ZERO_INIT_SPEC.map((entry) => entry.property)).toEqual(
+      ZERO_INIT_PROPERTIES,
+    );
+  });
+
+  it('carries the exposed metric name for every entry', () => {
+    expect(ZERO_INIT_SPEC.map((entry) => entry.name).sort()).toEqual(
+      Object.keys(ZERO_INIT_ORACLE).sort(),
+    );
+  });
+
+  it('pairs each spec entry name with its own counter', () => {
+    const metrics = createMetrics(new Registry());
+
+    for (const { property, name } of ZERO_INIT_SPEC) {
+      expect(
+        (metrics[property] as unknown as MetricInternals).name,
+        `spec row ${property}`,
+      ).toBe(name);
+    }
+  });
+
+  it('adds exactly 40 child series', () => {
+    const specTotal = ZERO_INIT_SPEC.reduce(
+      (sum, entry) => sum + entry.values.length,
+      0,
+    );
+    const oracleTotal = Object.values(ZERO_INIT_ORACLE).reduce(
+      (sum, values) => sum + values.length,
+      0,
+    );
+
+    expect(specTotal).toBe(40);
+    expect(oracleTotal).toBe(40);
+  });
+
+  it('seeds a child rather than offsetting its first increment', async () => {
+    const register = new Registry();
+    const metrics = createMetrics(register);
+
+    metrics.sendBatchesTotal.inc({ outcome: 'failure' });
+
+    const children = await childrenOf(
+      register,
+      'ghost_ses_proxy_send_batches_total',
+    );
+    expect(
+      children.find((child) => child.labels.outcome === 'failure')?.value,
+    ).toBe(1);
+    expect(
+      children.find((child) => child.labels.outcome === 'success')?.value,
+    ).toBe(0);
+  });
+
+  it('zero-initialises the other error_type, not just SES_ERROR_TYPES', async () => {
+    const register = new Registry();
+    createMetrics(register);
+
+    const other = (
+      await childrenOf(register, 'ghost_ses_proxy_ses_errors_total')
+    ).find((child) => child.labels.error_type === 'other');
+
+    expect(other).toBeDefined();
+    expect(other?.value).toBe(0);
+  });
+
+  it.each(EXCLUDED_FROM_ZERO_INIT)(
+    'leaves %s without any child series',
+    async (name) => {
+      const register = new Registry();
+      createMetrics(register);
+
+      expect(await childrenOf(register, name)).toEqual([]);
+    },
+  );
 });

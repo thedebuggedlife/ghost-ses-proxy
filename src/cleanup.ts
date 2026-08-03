@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import type { CleanupOutcome } from './metrics';
 import { TABLE_NAMES } from './schema';
 import type { Db, Metrics } from './types';
 
@@ -27,13 +28,17 @@ export function runCleanup(db: Db, logger: Logger, metrics: Metrics): void {
       deleted[table] = result.changes;
       metrics.dbCleanupDeletedRowsTotal.inc({ table }, result.changes);
     }
-    metrics.dbCleanupRunsTotal.inc({ outcome: 'success' });
+    metrics.dbCleanupRunsTotal.inc({
+      outcome: 'success' satisfies CleanupOutcome,
+    });
     log.info(
       { deleted, retentionDays: RETENTION_DAYS },
       'completed retention cleanup',
     );
   } catch (err) {
-    metrics.dbCleanupRunsTotal.inc({ outcome: 'error' });
+    metrics.dbCleanupRunsTotal.inc({
+      outcome: 'error' satisfies CleanupOutcome,
+    });
     log.error({ err, deleted }, 'retention cleanup failed');
   }
 }
