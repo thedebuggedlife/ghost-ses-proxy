@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import type { RecipientOutcome, SendOutcome } from '../metrics';
 import { buildRawMime } from '../mime';
 import { parseFormData, type FormFields } from '../multipart';
 import { Semaphore } from '../semaphore';
@@ -84,7 +85,7 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
       const ghostEmailId = scalarField(fields['v:email-id']);
 
       if (!from || !subject || toList.length === 0) {
-        sendBatchesTotal.inc({ outcome: 'rejected' });
+        sendBatchesTotal.inc({ outcome: 'rejected' satisfies SendOutcome });
         log.warn(
           { reqId, ghostEmailId, recipientCount: toList.length },
           'rejected send: missing required fields',
@@ -103,7 +104,7 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
             RecipientVars
           >;
         } catch (err) {
-          sendBatchesTotal.inc({ outcome: 'rejected' });
+          sendBatchesTotal.inc({ outcome: 'rejected' satisfies SendOutcome });
           log.warn(
             { reqId, ghostEmailId, err },
             'rejected send: invalid recipient-variables JSON',
@@ -193,7 +194,9 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
               );
 
               succeeded += 1;
-              sendRecipientsTotal.inc({ outcome: 'sent' });
+              sendRecipientsTotal.inc({
+                outcome: 'sent' satisfies RecipientOutcome,
+              });
               log.debug(
                 {
                   reqId,
@@ -207,7 +210,9 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
             } catch (err) {
               failed += 1;
               errors.push({ recipient, error: (err as Error).message });
-              sendRecipientsTotal.inc({ outcome: 'failed' });
+              sendRecipientsTotal.inc({
+                outcome: 'failed' satisfies RecipientOutcome,
+              });
               log.error(
                 { reqId, batchId, ghostEmailId, recipient, err },
                 'failed to send to recipient',
@@ -227,7 +232,7 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
       };
 
       if (succeeded === 0 && failed > 0) {
-        sendBatchesTotal.inc({ outcome: 'failure' });
+        sendBatchesTotal.inc({ outcome: 'failure' satisfies SendOutcome });
         log.error(outcomeFields, 'all recipients failed');
         res
           .status(500)
@@ -236,10 +241,10 @@ export function createSendEmailRoute(deps: Deps): RequestHandler<SendParams> {
       }
 
       if (failed > 0) {
-        sendBatchesTotal.inc({ outcome: 'partial' });
+        sendBatchesTotal.inc({ outcome: 'partial' satisfies SendOutcome });
         log.warn(outcomeFields, 'partial send failure');
       } else {
-        sendBatchesTotal.inc({ outcome: 'success' });
+        sendBatchesTotal.inc({ outcome: 'success' satisfies SendOutcome });
         log.info(outcomeFields, 'sent batch');
       }
 
