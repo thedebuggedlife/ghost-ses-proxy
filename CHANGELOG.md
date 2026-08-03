@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.3.0...v1.3.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* Zero-initialise bounded-label counters so increase() sees the first event ([#9](https://github.com/thedebuggedlife/ghost-ses-proxy/issues/9)) ([79a9f06](https://github.com/thedebuggedlife/ghost-ses-proxy/commit/79a9f06d3ca0327f688868f3f5ee5a277b553daa))
+
 ## [1.3.0](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.2.0...v1.3.0) (2026-07-31)
 
 
