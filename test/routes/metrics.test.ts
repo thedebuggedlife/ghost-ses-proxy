@@ -1,7 +1,16 @@
+import { createServer, type Server } from 'node:http';
 import express, { type Express } from 'express';
 import { Gauge } from 'prom-client';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { createApp } from '../../src/app';
 import { ZERO_INIT_SPEC } from '../../src/metrics';
 import { createMetricsRoute } from '../../src/routes/metrics';
@@ -16,10 +25,33 @@ function metricNames(body: string): string[] {
     .map((line) => line.split(' ')[2] ?? '');
 }
 
-describe('GET /metrics', () => {
-  let deps: TestDeps;
-  let app: Express;
+let deps: TestDeps;
+let app: Express;
 
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
+describe('GET /metrics', () => {
   beforeEach(() => {
     deps = makeDeps();
     app = createApp(deps);
@@ -30,14 +62,14 @@ describe('GET /metrics', () => {
   });
 
   it("returns 200 with prom-client's content type", async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe(deps.register.contentType);
   });
 
   it('returns a body that parses as the Prometheus exposition format', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
     const lines = res.text.split('\n').filter((line) => line.length > 0);
 
     expect(lines.length).toBeGreaterThan(0);
@@ -48,7 +80,7 @@ describe('GET /metrics', () => {
   });
 
   it('exposes the application metrics under the ghost_ses_proxy_ prefix', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
     const names = metricNames(res.text);
 
     expect(names).toContain('ghost_ses_proxy_http_requests_total');
@@ -60,7 +92,7 @@ describe('GET /metrics', () => {
   it('exposes db_rows, which proves attachDbGauges ran', async () => {
     deps.db.insertMessageMap('batch-1', null, null);
 
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
 
     expect(metricNames(res.text)).toContain('ghost_ses_proxy_db_rows');
     expect(res.text).toContain(
@@ -70,7 +102,7 @@ describe('GET /metrics', () => {
   });
 
   it('exposes the default process/nodejs metrics unprefixed', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
     const names = metricNames(res.text);
 
     expect(names).toContain('process_cpu_seconds_total');
@@ -81,8 +113,8 @@ describe('GET /metrics', () => {
   });
 
   it('is served without an Authorization header', async () => {
-    const anonymous = await request(app).get('/metrics');
-    const authenticated = await request(app)
+    const anonymous = await request(server).get('/metrics');
+    const authenticated = await request(server)
       .get('/metrics')
       .set('Authorization', AUTH);
 
@@ -91,7 +123,7 @@ describe('GET /metrics', () => {
   });
 
   it('is served even when the Authorization header is invalid', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/metrics')
       .set('Authorization', 'Basic bm9wZTpub3Bl');
 
@@ -99,7 +131,7 @@ describe('GET /metrics', () => {
   });
 
   it('reads from the injected registry, not the global default', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
     const otherDeps = makeDeps();
     otherDeps.metrics.sendBatchesTotal.inc({ outcome: 'success' });
 
@@ -110,7 +142,7 @@ describe('GET /metrics', () => {
   });
 
   it('writes no access-log line', async () => {
-    await request(app).get('/metrics');
+    await request(server).get('/metrics');
 
     expect(deps.logs().filter((line) => line['responseTime'] !== undefined)).toEqual(
       [],
@@ -118,7 +150,7 @@ describe('GET /metrics', () => {
   });
 
   it('exposes the issue #8 series at 0 on a cold app, before any traffic', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
 
     expect(res.text).toContain(
       'ghost_ses_proxy_send_batches_total{outcome="failure"} 0',
@@ -132,7 +164,7 @@ describe('GET /metrics', () => {
   });
 
   it('exposes every zero-initialised child at 0 on a cold app', async () => {
-    const res = await request(app).get('/metrics');
+    const res = await request(server).get('/metrics');
 
     for (const { name, label, values } of ZERO_INIT_SPEC) {
       for (const value of values) {
@@ -154,7 +186,8 @@ describe('GET /metrics', () => {
 
     const bare = express();
     bare.get('/metrics', createMetricsRoute(register));
-    const res = await request(bare).get('/metrics');
+    app = bare;
+    const res = await request(server).get('/metrics');
 
     expect(res.status).toBe(500);
     register.removeSingleMetric('broken_gauge');

@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import {
   DeleteMessageCommand,
@@ -12,6 +13,7 @@ import request from 'supertest';
 import {
   afterAll,
   afterEach,
+  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -167,6 +169,36 @@ function newDeps(overrides: Parameters<typeof makeDeps>[0] = {}): TestDeps {
   return deps;
 }
 
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let currentApp: Express;
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        currentApp(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
+/** Routes the shared socket at `app` and returns a supertest agent for it. */
+function serve(app: Express): request.Agent {
+  currentApp = app;
+  return request(server);
+}
+
 function seedGolden(deps: TestDeps): void {
   for (const row of eventsSeed) deps.db.insertEvent(row);
   for (const row of suppressionsSeed) {
@@ -183,7 +215,7 @@ function post(
   app: Express,
   fields: Record<string, string | string[]>,
 ): request.Test {
-  let req = pin(request(app).post('/v3/example.com/messages'), true);
+  let req = pin(serve(app).post('/v3/example.com/messages'), true);
   for (const [name, value] of Object.entries(fields)) {
     for (const single of Array.isArray(value) ? value : [value]) {
       req = req.field(name, single);
@@ -325,7 +357,7 @@ describe('captured/http-health.json', () => {
     });
 
     const res = await pin(
-      request(createApp(deps)).get(fixture._request.path),
+      serve(createApp(deps)).get(fixture._request.path),
       fixture._request.auth,
     );
 
@@ -341,7 +373,7 @@ describe('captured/http-events-*.json', () => {
     seedGolden(deps);
 
     const res = await pin(
-      request(createApp(deps)).get(fixture._request.path),
+      serve(createApp(deps)).get(fixture._request.path),
       fixture._request.auth,
     );
 
@@ -367,7 +399,7 @@ describe('captured/http-suppression-*.json', () => {
       const fixture = capturedJson<HttpFixture>(file);
 
       const res = await pin(
-        request(app).delete(fixture._request.path),
+        serve(app).delete(fixture._request.path),
         fixture._request.auth,
       );
 
@@ -681,7 +713,7 @@ async function getEvents(
   deps: TestDeps,
   path: string,
 ): Promise<{ status: number; body: EventsBody }> {
-  const res = await pin(request(createApp(deps)).get(path), true);
+  const res = await pin(serve(createApp(deps)).get(path), true);
   return { status: res.status, body: res.body as EventsBody };
 }
 

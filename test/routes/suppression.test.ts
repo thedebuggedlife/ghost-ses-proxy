@@ -1,5 +1,15 @@
+import { createServer, type Server } from 'node:http';
+import type { Express } from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { createApp } from '../../src/app';
 import { SUPPRESSION_TYPES } from '../../src/metrics';
 import type { SuppressionType } from '../../src/types';
@@ -18,14 +28,39 @@ interface CountRow {
   c: number;
 }
 
-describe('DELETE /v3/:domain/:type/:email', () => {
-  let deps: TestDeps;
+let deps: TestDeps;
+let app: Express;
 
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
+describe('DELETE /v3/:domain/:type/:email', () => {
   beforeEach(() => {
     deps = makeDeps();
     deps.db.insertSuppression('bounced+tag@example.com', 'bounces', 'hard bounce');
     deps.db.insertSuppression('complainer@example.com', 'complaints', null);
     deps.db.insertSuppression('unsub@example.com', 'unsubscribes', null);
+    app = createApp(deps);
   });
 
   afterEach(() => {
@@ -50,7 +85,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   }
 
   it('deletes the row and returns the Mailgun body', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/complaints/complainer%40example.com')
       .set('Authorization', AUTH);
 
@@ -64,10 +99,8 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('accepts every valid suppression type', async () => {
-    const app = createApp(deps);
-
     for (const type of SUPPRESSION_TYPES) {
-      const res = await request(app)
+      const res = await request(server)
         .delete(`/v3/example.com/${type}/${EMAIL_BY_TYPE[type]}`)
         .set('Authorization', AUTH);
       expect(res.status).toBe(200);
@@ -77,7 +110,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('returns 404 with the exact message for an unknown type', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/unsubscribed/complainer%40example.com')
       .set('Authorization', AUTH);
 
@@ -89,7 +122,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('does not count an unknown type in suppressions_removed_total', async () => {
-    await request(createApp(deps))
+    await request(server)
       .delete('/v3/example.com/unsubscribed/complainer%40example.com')
       .set('Authorization', AUTH);
 
@@ -101,7 +134,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('decodes a %40-encoded address', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/bounces/bounced%2Btag%40example.com')
       .set('Authorization', AUTH);
 
@@ -110,7 +143,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('treats a literal + in the path as a plus, not a space', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/bounces/bounced+tag%40example.com')
       .set('Authorization', AUTH);
 
@@ -119,7 +152,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('decodes a double-encoded address a second time', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/bounces/bounced%252Btag%2540example.com')
       .set('Authorization', AUTH);
 
@@ -128,7 +161,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('returns 200 when the address was never suppressed', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .delete('/v3/example.com/bounces/nobody%40example.com')
       .set('Authorization', AUTH);
 
@@ -142,16 +175,14 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('counts rows actually removed, not delete requests', async () => {
-    const app = createApp(deps);
-
-    await request(app)
+    await request(server)
       .delete('/v3/example.com/bounces/bounced%2Btag%40example.com')
       .set('Authorization', AUTH);
     // Never suppressed — returns 200, but removes nothing, so it must not count.
-    await request(app)
+    await request(server)
       .delete('/v3/example.com/bounces/nobody%40example.com')
       .set('Authorization', AUTH);
-    await request(app)
+    await request(server)
       .delete('/v3/example.com/complaints/complainer%40example.com')
       .set('Authorization', AUTH);
 
@@ -163,7 +194,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('does not increment when nothing was removed', async () => {
-    await request(createApp(deps))
+    await request(server)
       .delete('/v3/example.com/bounces/nobody%40example.com')
       .set('Authorization', AUTH);
 
@@ -175,7 +206,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('logs the removal with component and recipient', async () => {
-    await request(createApp(deps))
+    await request(server)
       .delete('/v3/example.com/complaints/complainer%40example.com')
       .set('Authorization', AUTH);
 
@@ -192,7 +223,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('requires authentication', async () => {
-    const res = await request(createApp(deps)).delete(
+    const res = await request(server).delete(
       '/v3/example.com/complaints/complainer%40example.com',
     );
 
@@ -201,7 +232,7 @@ describe('DELETE /v3/:domain/:type/:email', () => {
   });
 
   it('labels the HTTP metric with the route template, never the address', async () => {
-    await request(createApp(deps))
+    await request(server)
       .delete('/v3/example.com/complaints/complainer%40example.com')
       .set('Authorization', AUTH);
 

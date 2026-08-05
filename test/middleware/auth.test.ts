@@ -1,6 +1,15 @@
+import { createServer, type Server } from 'node:http';
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { loadConfig } from '../../src/config';
 import { createAuthMiddleware } from '../../src/middleware/auth';
 import type { Config, Db } from '../../src/types';
@@ -24,6 +33,29 @@ function appFor(config: Config): Express {
 let config: Config;
 let app: Express;
 
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
 beforeEach(() => {
   const deps = makeDeps();
   open.push(deps.db);
@@ -39,7 +71,7 @@ afterEach(() => {
 
 describe('createAuthMiddleware', () => {
   it('passes a valid Basic api:<key> credential through', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic(`api:${config.proxyApiKey}`));
 
@@ -48,7 +80,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('ignores the username and checks only the password', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic(`anyone:${config.proxyApiKey}`));
 
@@ -56,14 +88,14 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a missing Authorization header', async () => {
-    const res = await request(app).get('/v3/example.com/events');
+    const res = await request(server).get('/v3/example.com/events');
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ message: 'Unauthorized: missing credentials' });
   });
 
   it('rejects a non-Basic scheme', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', `Bearer ${config.proxyApiKey}`);
 
@@ -72,7 +104,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a lowercase basic scheme', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic(`api:${config.proxyApiKey}`).toLowerCase());
 
@@ -81,7 +113,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects malformed base64, which decodes leniently to a value with no colon', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', 'Basic !!!!not base64!!!!');
 
@@ -90,7 +122,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a credential with no colon', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic('apinocolon'));
 
@@ -99,7 +131,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a bare Basic scheme, whose trailing space HTTP strips in transit', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', 'Basic ');
 
@@ -108,7 +140,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a credential that decodes to an empty string', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', 'Basic ====');
 
@@ -117,7 +149,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects a wrong API key', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic('api:not-the-key'));
 
@@ -126,7 +158,7 @@ describe('createAuthMiddleware', () => {
   });
 
   it('rejects an empty password', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic('api:'));
 
@@ -139,8 +171,9 @@ describe('createAuthMiddleware', () => {
       config: loadConfig({ ...TEST_ENV, PROXY_API_KEY: 'k:e:y' }),
     });
     open.push(deps.db);
+    app = appFor(deps.config);
 
-    const res = await request(appFor(deps.config))
+    const res = await request(server)
       .get('/v3/example.com/events')
       .set('Authorization', basic('api:k:e:y'));
 
@@ -153,8 +186,9 @@ describe('createAuthMiddleware', () => {
     unguarded.get('/health', (_req, res) => {
       res.status(200).json({ status: 'ok' });
     });
+    app = unguarded;
 
-    const res = await request(unguarded).get('/health');
+    const res = await request(server).get('/health');
 
     expect(res.status).toBe(200);
   });

@@ -1,5 +1,15 @@
+import { createServer, type Server } from 'node:http';
+import type { Express } from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { createApp } from '../../src/app';
 import { makeDeps, type TestDeps } from '../helpers/deps';
 
@@ -7,9 +17,34 @@ const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
 
 describe('GET /health', () => {
   let deps: TestDeps;
+  let app: Express;
+
+  // One listening socket for the whole file, delegating to whichever app the
+  // current test built. Passing the Express app to supertest instead binds a
+  // fresh ephemeral server per call, which is what makes these tests hang
+  // intermittently.
+  let server: Server;
+
+  beforeAll(
+    () =>
+      new Promise<void>((resolve) => {
+        server = createServer((req, res) => {
+          app(req, res);
+        });
+        server.listen(0, resolve);
+      }),
+  );
+
+  afterAll(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }),
+  );
 
   beforeEach(() => {
     deps = makeDeps();
+    app = createApp(deps);
   });
 
   afterEach(() => {
@@ -45,7 +80,7 @@ describe('GET /health', () => {
   }
 
   it('returns 200 with the exact { status, tables } shape', async () => {
-    const res = await request(createApp(deps)).get('/health');
+    const res = await request(server).get('/health');
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -60,7 +95,7 @@ describe('GET /health', () => {
   });
 
   it('carries exactly the four table keys, in schema order', async () => {
-    const res = await request(createApp(deps)).get('/health');
+    const res = await request(server).get('/health');
 
     expect(Object.keys(res.body as object)).toEqual(['status', 'tables']);
     expect(Object.keys((res.body as { tables: object }).tables)).toEqual([
@@ -74,7 +109,7 @@ describe('GET /health', () => {
   it('reports counts that reflect the database', async () => {
     seed();
 
-    const res = await request(createApp(deps)).get('/health');
+    const res = await request(server).get('/health');
 
     expect(res.body).toEqual({
       status: 'ok',
@@ -88,16 +123,16 @@ describe('GET /health', () => {
   });
 
   it('responds as JSON', async () => {
-    const res = await request(createApp(deps)).get('/health');
+    const res = await request(server).get('/health');
 
     expect(res.headers['content-type']).toMatch(/application\/json/);
   });
 
   it('is served without an Authorization header', async () => {
-    const app = createApp(deps);
-
-    const anonymous = await request(app).get('/health');
-    const authenticated = await request(app).get('/health').set('Authorization', AUTH);
+    const anonymous = await request(server).get('/health');
+    const authenticated = await request(server)
+      .get('/health')
+      .set('Authorization', AUTH);
 
     expect(anonymous.status).toBe(200);
     expect(authenticated.status).toBe(200);
@@ -105,7 +140,7 @@ describe('GET /health', () => {
   });
 
   it('is served even when the Authorization header is invalid', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .get('/health')
       .set('Authorization', 'Basic bm9wZTpub3Bl');
 
@@ -113,11 +148,10 @@ describe('GET /health', () => {
   });
 
   it('serves the counts through the cached stats collector', async () => {
-    const app = createApp(deps);
-    await request(app).get('/health');
+    await request(server).get('/health');
 
     seed();
-    const res = await request(app).get('/health');
+    const res = await request(server).get('/health');
 
     expect(res.body).toEqual({
       status: 'ok',
@@ -131,7 +165,7 @@ describe('GET /health', () => {
   });
 
   it('counts the request in the HTTP metrics with the route template', async () => {
-    await request(createApp(deps)).get('/health');
+    await request(server).get('/health');
 
     const json = await deps.register.getMetricsAsJSON();
     const values =
@@ -144,7 +178,7 @@ describe('GET /health', () => {
   });
 
   it('writes no access-log line', async () => {
-    await request(createApp(deps)).get('/health');
+    await request(server).get('/health');
 
     expect(deps.logs().filter((line) => line['responseTime'] !== undefined)).toEqual(
       [],
