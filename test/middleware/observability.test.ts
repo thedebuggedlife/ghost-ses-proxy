@@ -1,3 +1,4 @@
+import { createServer, type Server } from 'node:http';
 import express, {
   type ErrorRequestHandler,
   type Express,
@@ -5,7 +6,15 @@ import express, {
 } from 'express';
 import type { Registry } from 'prom-client';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { createAuthMiddleware } from '../../src/middleware/auth';
 import {
   ACCESS_LOG_IGNORED_PATHS,
@@ -81,6 +90,29 @@ function accessLogs(deps: TestDeps): Record<string, unknown>[] {
 
 let deps: TestDeps;
 let app: Express;
+
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call — 24 of them here — which is what makes these
+// tests hang intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
 
 beforeEach(() => {
   deps = makeDeps();
@@ -178,7 +210,7 @@ describe('serializers', () => {
 
 describe('createHttpMetrics', () => {
   it('records the counter and histogram with method, route and status_code', async () => {
-    await request(app).get('/health').expect(200);
+    await request(server).get('/health').expect(200);
 
     expect(await requestLabels(deps)).toEqual([
       { method: 'GET', route: '/health', status_code: '200' },
@@ -199,7 +231,7 @@ describe('createHttpMetrics', () => {
   });
 
   it('labels the route with the Express template, not the raw path', async () => {
-    await request(app)
+    await request(server)
       .delete(`/v3/example.com/bounces/${encodeURIComponent(SUBSCRIBER)}`)
       .set('Authorization', AUTH)
       .expect(200);
@@ -214,7 +246,7 @@ describe('createHttpMetrics', () => {
   });
 
   it('never lets a subscriber address reach a metric label', async () => {
-    await request(app)
+    await request(server)
       .delete(`/v3/example.com/bounces/${encodeURIComponent(SUBSCRIBER)}`)
       .set('Authorization', AUTH)
       .expect(200);
@@ -234,7 +266,7 @@ describe('createHttpMetrics', () => {
   });
 
   it('labels an unmatched path "unmatched"', async () => {
-    await request(app).get('/nope').expect(404);
+    await request(server).get('/nope').expect(404);
 
     expect(await requestLabels(deps)).toEqual([
       { method: 'GET', route: UNMATCHED_ROUTE, status_code: '404' },
@@ -242,7 +274,7 @@ describe('createHttpMetrics', () => {
   });
 
   it('labels a pre-routing 401 "unmatched"', async () => {
-    await request(app).post('/v3/example.com/messages').expect(401);
+    await request(server).post('/v3/example.com/messages').expect(401);
 
     expect(await requestLabels(deps)).toEqual([
       { method: 'POST', route: UNMATCHED_ROUTE, status_code: '401' },
@@ -250,8 +282,8 @@ describe('createHttpMetrics', () => {
   });
 
   it('counts /health and /metrics even though they are not access-logged', async () => {
-    await request(app).get('/health').expect(200);
-    await request(app).get('/metrics').expect(200);
+    await request(server).get('/health').expect(200);
+    await request(server).get('/metrics').expect(200);
 
     const labels = await requestLabels(deps);
     expect(labels.map((label) => label['route']).sort()).toEqual([
@@ -263,8 +295,8 @@ describe('createHttpMetrics', () => {
   });
 
   it('accumulates repeated requests on one series', async () => {
-    await request(app).get('/health').expect(200);
-    await request(app).get('/health').expect(200);
+    await request(server).get('/health').expect(200);
+    await request(server).get('/health').expect(200);
 
     const values = await valuesOf(deps, REQUESTS_TOTAL);
     expect(values).toHaveLength(1);
@@ -272,7 +304,7 @@ describe('createHttpMetrics', () => {
   });
 
   it('records a 500 with the route template', async () => {
-    await request(app).get('/boom').expect(500);
+    await request(server).get('/boom').expect(500);
 
     expect(await requestLabels(deps)).toEqual([
       { method: 'GET', route: '/boom', status_code: '500' },
@@ -283,7 +315,7 @@ describe('createHttpMetrics', () => {
   // but leaves `req.route` set, so a throwing route inside a mounted router
   // loses its mount prefix. Still a bounded template with no PII.
   it('loses the mount prefix when a route inside a mounted router throws', async () => {
-    await request(app)
+    await request(server)
       .get('/v3/example.com/boom')
       .set('Authorization', AUTH)
       .expect(500);
@@ -296,7 +328,7 @@ describe('createHttpMetrics', () => {
 
 describe('createHttpLogger', () => {
   it('writes one access-log line carrying the trimmed fields', async () => {
-    await request(app)
+    await request(server)
       .post('/v3/example.com/messages?x=1')
       .set('Authorization', AUTH)
       .expect(200);
@@ -317,7 +349,7 @@ describe('createHttpLogger', () => {
   });
 
   it('labels the log line with the route template on the error path too', async () => {
-    await request(app).get('/boom').expect(500);
+    await request(server).get('/boom').expect(500);
 
     const lines = accessLogs(deps);
     expect(lines).toHaveLength(1);
@@ -325,13 +357,13 @@ describe('createHttpLogger', () => {
   });
 
   it('labels an unrouted log line "unmatched"', async () => {
-    await request(app).get('/nope').expect(404);
+    await request(server).get('/nope').expect(404);
     expect(accessLogs(deps)[0]?.['route']).toBe(UNMATCHED_ROUTE);
   });
 
   it('stamps every line with a fresh UUID reqId', async () => {
-    await request(app).get('/nope').expect(404);
-    await request(app).get('/nope').expect(404);
+    await request(server).get('/nope').expect(404);
+    await request(server).get('/nope').expect(404);
 
     const ids = accessLogs(deps).map((line) => line['reqId']);
     expect(ids).toHaveLength(2);
@@ -344,23 +376,23 @@ describe('createHttpLogger', () => {
   });
 
   it('suppresses access logs for /health and /metrics but not other paths', async () => {
-    await request(app).get('/health').expect(200);
-    await request(app).get('/metrics').expect(200);
+    await request(server).get('/health').expect(200);
+    await request(server).get('/metrics').expect(200);
     expect(accessLogs(deps)).toHaveLength(0);
 
-    await request(app).get('/nope').expect(404);
+    await request(server).get('/nope').expect(404);
     expect(accessLogs(deps)).toHaveLength(1);
   });
 
   it('still suppresses /health when it carries a query string', async () => {
-    await request(app).get('/health?verbose=1').expect(200);
+    await request(server).get('/health?verbose=1').expect(200);
     expect(accessLogs(deps)).toHaveLength(0);
   });
 
   it('maps 4xx to warn and 5xx to error', async () => {
-    await request(app).get('/nope').expect(404);
-    await request(app).post('/v3/example.com/messages').expect(401);
-    await request(app).get('/boom').expect(500);
+    await request(server).get('/nope').expect(404);
+    await request(server).post('/v3/example.com/messages').expect(401);
+    await request(server).get('/boom').expect(500);
 
     expect(accessLogs(deps).map((line) => line['level'])).toEqual([
       'warn',
@@ -370,7 +402,7 @@ describe('createHttpLogger', () => {
   });
 
   it('never emits the authorization header', async () => {
-    await request(app)
+    await request(server)
       .delete(`/v3/example.com/bounces/${encodeURIComponent(SUBSCRIBER)}`)
       .set('Authorization', AUTH)
       .set('Cookie', 'session=secret')

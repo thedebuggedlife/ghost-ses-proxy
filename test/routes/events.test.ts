@@ -1,5 +1,15 @@
+import { createServer, type Server } from 'node:http';
+import type { Express } from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 import { createApp } from '../../src/app';
 import {
   clampLimit,
@@ -27,12 +37,38 @@ interface EventsBody {
   paging: { next: string; previous: string; first: string; last: string };
 }
 
+let app: Express;
+
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
 describe('GET /v3/:domain/events', () => {
   let deps: TestDeps;
 
   beforeEach(() => {
     deps = makeDeps();
     for (const row of seed as EventRow[]) deps.db.insertEvent(row);
+    app = createApp(deps);
   });
 
   afterEach(() => {
@@ -40,7 +76,7 @@ describe('GET /v3/:domain/events', () => {
   });
 
   async function get(path: string): Promise<{ status: number; body: EventsBody }> {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .get(path)
       .set('Authorization', AUTH)
       .set('Host', HOST);
@@ -238,7 +274,7 @@ describe('GET /v3/:domain/events', () => {
   });
 
   it('honours x-forwarded-proto when building the cursor URL', async () => {
-    const res = await request(createApp(deps))
+    const res = await request(server)
       .get('/v3/example.com/events?limit=3')
       .set('Authorization', AUTH)
       .set('Host', HOST)
@@ -259,7 +295,7 @@ describe('GET /v3/:domain/events', () => {
   });
 
   it('requires authentication', async () => {
-    const res = await request(createApp(deps)).get('/v3/example.com/events');
+    const res = await request(server).get('/v3/example.com/events');
 
     expect(res.status).toBe(401);
   });

@@ -1,8 +1,18 @@
 import { readFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import { join } from 'node:path';
 import type { Express } from 'express';
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 const { throwForRecipients } = vi.hoisted(() => ({
   throwForRecipients: new Set<string>(),
@@ -50,8 +60,38 @@ const CAPTURED = join(__dirname, '..', 'golden', 'captured');
 
 type Fields = Record<string, string | string[]>;
 
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let currentApp: Express;
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        currentApp(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
+/** Routes the shared socket at `app` and returns a supertest agent for it. */
+function serve(app: Express): request.Agent {
+  currentApp = app;
+  return request(server);
+}
+
 function post(app: Express, fields: Fields): request.Test {
-  let req = request(app)
+  let req = serve(app)
     .post('/v3/example.com/messages')
     .set('Authorization', AUTH);
 
@@ -288,7 +328,7 @@ describe('POST /v3/:domain/messages', () => {
     });
 
     it('requires authentication', async () => {
-      const res = await request(app)
+      const res = await serve(app)
         .post('/v3/example.com/messages')
         .field('from', 'a@example.com');
 
@@ -413,7 +453,7 @@ describe('POST /v3/:domain/messages', () => {
     });
 
     it('returns 500 without incrementing any send_batches_total outcome when the body is not multipart', async () => {
-      const res = await request(app)
+      const res = await serve(app)
         .post('/v3/example.com/messages')
         .set('Authorization', AUTH)
         .set('Content-Type', 'application/json')
@@ -607,7 +647,7 @@ describe('POST /v3/:domain/messages', () => {
     it('completes as partial with 200 and releases the slot', async () => {
       throwForRecipients.add('alice@example.com');
 
-      const res = await request(d1App)
+      const res = await serve(d1App)
         .post('/v3/example.com/messages')
         .set('Authorization', AUTH)
         .field('from', String(fields['from']))

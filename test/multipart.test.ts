@@ -1,7 +1,8 @@
+import { createServer, type Server } from 'node:http';
 import express from 'express';
 import type { Express } from 'express';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ARRAY_FIELDS, parseFormData } from '../src/multipart';
 
 function makeApp(): Express {
@@ -19,13 +20,42 @@ function makeApp(): Express {
   return app;
 }
 
+let app: Express;
+
+// One listening socket for the whole file, delegating to whichever app the
+// current test built. Passing the Express app to supertest instead binds a
+// fresh ephemeral server per call, which is what makes these tests hang
+// intermittently.
+let server: Server;
+
+beforeAll(
+  () =>
+    new Promise<void>((resolve) => {
+      server = createServer((req, res) => {
+        app(req, res);
+      });
+      server.listen(0, resolve);
+    }),
+);
+
+afterAll(
+  () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
+);
+
+beforeEach(() => {
+  app = makeApp();
+});
+
 describe('parseFormData', () => {
   it('exposes the repeated-field allowlist', () => {
     expect([...ARRAY_FIELDS].sort()).toEqual(['o:tag', 'to']);
   });
 
   it('returns single fields as strings', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('from', 'newsletter@example.com')
       .field('subject', 'Weekly digest')
@@ -40,7 +70,7 @@ describe('parseFormData', () => {
   });
 
   it('accumulates repeated to and o:tag fields as arrays', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('from', 'newsletter@example.com')
       .field('to', 'alice@example.com')
@@ -57,7 +87,7 @@ describe('parseFormData', () => {
   });
 
   it('yields a one-element array for a single to field', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('to', 'alice@example.com');
 
@@ -65,14 +95,14 @@ describe('parseFormData', () => {
   });
 
   it('omits allowlisted fields entirely when they never appear', async () => {
-    const res = await request(makeApp()).post('/').field('subject', 'no tags');
+    const res = await request(server).post('/').field('subject', 'no tags');
 
     expect(res.body.fields).not.toHaveProperty('to');
     expect(res.body.fields).not.toHaveProperty('o:tag');
   });
 
   it('keeps the last value for a repeated non-allowlisted field', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('subject', 'first')
       .field('subject', 'second');
@@ -81,7 +111,7 @@ describe('parseFormData', () => {
   });
 
   it('passes h:* and v:* fields through as strings', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('h:Reply-To', 'reply@example.com')
       .field('h:List-Unsubscribe', '<https://example.com/unsub>')
@@ -95,7 +125,7 @@ describe('parseFormData', () => {
   });
 
   it('resolves an empty object for a body with no fields', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .set('Content-Type', 'multipart/form-data; boundary=EMPTY')
       .send('--EMPTY--\r\n');
@@ -105,7 +135,7 @@ describe('parseFormData', () => {
   });
 
   it('preserves UTF-8 field values', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .field('subject', 'Résumé — 日本語');
 
@@ -113,7 +143,7 @@ describe('parseFormData', () => {
   });
 
   it('rejects an unsupported content type', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .set('Content-Type', 'application/json')
       .send('{}');
@@ -123,7 +153,7 @@ describe('parseFormData', () => {
   });
 
   it('rejects a multipart content type with no boundary', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .set('Content-Type', 'multipart/form-data')
       .send('nothing');
@@ -133,7 +163,7 @@ describe('parseFormData', () => {
   });
 
   it('rejects when busboy errors on a truncated body', async () => {
-    const res = await request(makeApp())
+    const res = await request(server)
       .post('/')
       .set('Content-Type', 'multipart/form-data; boundary=TRUNC')
       .send('--TRUNC\r\nContent-Disposition: form-data; name="a"\r\n\r\nvalue');
