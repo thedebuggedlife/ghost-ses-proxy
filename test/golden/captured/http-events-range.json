@@ -85,10 +85,10 @@
       }
     ],
     "paging": {
-      "next": "",
-      "previous": "",
-      "first": "",
-      "last": ""
+      "next": "http://localhost:3003/v3/example.com/events?begin=1750000002&end=1750000005",
+      "previous": "http://localhost:3003/v3/example.com/events?begin=1750000002&end=1750000005",
+      "first": "http://localhost:3003/v3/example.com/events?begin=1750000002&end=1750000005",
+      "last": "http://localhost:3003/v3/example.com/events?begin=1750000002&end=1750000005"
     }
   }
 }

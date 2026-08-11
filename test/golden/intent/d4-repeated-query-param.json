@@ -23,7 +23,7 @@
         "status": 200,
         "honoredValue": "delivered",
         "itemIds": ["evt-0001", "evt-0005"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?event=delivered&event=opened"
       }
     },
     {
@@ -38,7 +38,7 @@
         "status": 200,
         "honoredValue": "bulk-email",
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0005", "evt-0007"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?tags=bulk-email&tags=ghost-email"
       }
     },
     {
@@ -54,7 +54,7 @@
         "status": 200,
         "honoredValue": "delivered OR opened",
         "itemIds": ["evt-0001", "evt-0002", "evt-0005"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20opened&event=failed"
       }
     },
     {
@@ -70,7 +70,7 @@
         "status": 200,
         "honoredValue": "",
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?event=&event=opened"
       }
     }
   ],

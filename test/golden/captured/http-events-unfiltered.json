@@ -133,10 +133,10 @@
       }
     ],
     "paging": {
-      "next": "",
-      "previous": "",
-      "first": "",
-      "last": ""
+      "next": "http://localhost:3003/v3/example.com/events",
+      "previous": "http://localhost:3003/v3/example.com/events",
+      "first": "http://localhost:3003/v3/example.com/events",
+      "last": "http://localhost:3003/v3/example.com/events"
     }
   }
 }

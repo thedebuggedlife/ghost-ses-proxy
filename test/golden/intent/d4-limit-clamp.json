@@ -18,8 +18,8 @@
         "status": 200,
         "effectiveLimit": 1000,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": "",
-        "pagingNextNote": "rows.length (7) !== effectiveLimit (1000), so no cursor is emitted."
+        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=99999999",
+        "pagingNextNote": "rows.length (7) !== effectiveLimit (1000), so no cursor is emitted; paging.next is the request's own URL instead (issue #12 — every paging value must be an absolute URL)."
       }
     },
     {
@@ -29,7 +29,7 @@
         "status": 200,
         "effectiveLimit": 1000,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=1000"
       }
     },
     {
@@ -61,7 +61,7 @@
         "status": 200,
         "effectiveLimit": 300,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": ""
+        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=abc"
       }
     }
   ]
