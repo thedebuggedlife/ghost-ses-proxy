@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.3.1...v1.3.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* Return absolute paging URLs from the events API ([#13](https://github.com/thedebuggedlife/ghost-ses-proxy/issues/13)) ([d31d3d7](https://github.com/thedebuggedlife/ghost-ses-proxy/commit/d31d3d7129eeb8d7eef647ca6757ea68a8c19bc0))
+
 ## [1.3.1](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.3.0...v1.3.1) (2026-08-03)
 
 
