@@ -85,7 +85,7 @@ describe('GET /v3/:domain/events', () => {
 
   const ids = (body: EventsBody): string[] => body.items.map((item) => item.id);
 
-  it('returns Mailgun-shaped items and an empty paging block', async () => {
+  it('returns Mailgun-shaped items and absolute paging URLs', async () => {
     const { status, body } = await get('/v3/example.com/events');
 
     expect(status).toBe(200);
@@ -99,10 +99,10 @@ describe('GET /v3/:domain/events', () => {
       'evt-0007',
     ]);
     expect(body.paging).toEqual({
-      next: '',
-      previous: '',
-      first: '',
-      last: '',
+      next: 'http://localhost:3003/v3/example.com/events',
+      previous: 'http://localhost:3003/v3/example.com/events',
+      first: 'http://localhost:3003/v3/example.com/events',
+      last: 'http://localhost:3003/v3/example.com/events',
     });
     expect(body.items[0]).toEqual({
       id: 'evt-0001',
@@ -251,6 +251,15 @@ describe('GET /v3/:domain/events', () => {
     expect(first.body.paging.next).toBe(
       'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
     );
+    expect(first.body.paging.previous).toBe(
+      'http://localhost:3003/v3/example.com/events?limit=3',
+    );
+    expect(first.body.paging.first).toBe(
+      'http://localhost:3003/v3/example.com/events?limit=3',
+    );
+    expect(first.body.paging.last).toBe(
+      'http://localhost:3003/v3/example.com/events?limit=3',
+    );
 
     const cursorPath = new URL(first.body.paging.next).pathname;
     const second = await get(cursorPath);
@@ -261,7 +270,18 @@ describe('GET /v3/:domain/events', () => {
       'evt-0006',
       'evt-0007',
     ]);
-    expect(second.body.paging.next).toBe('');
+    expect(second.body.paging.next).toBe(
+      'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
+    );
+    expect(second.body.paging.previous).toBe(
+      'http://localhost:3003/v3/example.com/events',
+    );
+    expect(second.body.paging.first).toBe(
+      'http://localhost:3003/v3/example.com/events',
+    );
+    expect(second.body.paging.last).toBe(
+      'http://localhost:3003/v3/example.com/events',
+    );
     expect(
       ids(first.body).filter((id) => ids(second.body).includes(id)),
     ).toEqual([]);
@@ -273,15 +293,26 @@ describe('GET /v3/:domain/events', () => {
     expect(body.paging.next).not.toContain('limit');
   });
 
-  it('honours x-forwarded-proto when building the cursor URL', async () => {
+  it('honours x-forwarded-proto in all paging URLs', async () => {
     const res = await request(server)
       .get('/v3/example.com/events?limit=3')
       .set('Authorization', AUTH)
       .set('Host', HOST)
       .set('X-Forwarded-Proto', 'https');
 
-    expect((res.body as EventsBody).paging.next).toBe(
+    const { paging } = res.body as EventsBody;
+
+    expect(paging.next).toBe(
       'https://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
+    );
+    expect(paging.previous).toBe(
+      'https://localhost:3003/v3/example.com/events?limit=3',
+    );
+    expect(paging.first).toBe(
+      'https://localhost:3003/v3/example.com/events?limit=3',
+    );
+    expect(paging.last).toBe(
+      'https://localhost:3003/v3/example.com/events?limit=3',
     );
   });
 
@@ -373,14 +404,18 @@ describe('GET /v3/:domain/events', () => {
 
       expect(status).toBe(200);
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe('');
+      expect(body.paging.next).toBe(
+        'http://localhost:3003/v3/example.com/events?limit=99999999',
+      );
     });
 
     it('accepts the maximum verbatim', async () => {
       const { body } = await get('/v3/example.com/events?limit=1000');
 
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe('');
+      expect(body.paging.next).toBe(
+        'http://localhost:3003/v3/example.com/events?limit=1000',
+      );
     });
 
     it('clamps limit=0 up to 1', async () => {
@@ -405,7 +440,9 @@ describe('GET /v3/:domain/events', () => {
       const { body } = await get('/v3/example.com/events?limit=abc');
 
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe('');
+      expect(body.paging.next).toBe(
+        'http://localhost:3003/v3/example.com/events?limit=abc',
+      );
     });
   });
 });

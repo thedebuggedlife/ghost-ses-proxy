@@ -91,10 +91,10 @@
       }
     ],
     "paging": {
-      "next": "",
-      "previous": "",
-      "first": "",
-      "last": ""
+      "next": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
+      "previous": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
+      "first": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
+      "last": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed"
     }
   }
 }

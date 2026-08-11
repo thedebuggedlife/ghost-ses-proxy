@@ -144,15 +144,27 @@ export function createEventsRoute(
       return item;
     });
 
-    const paging = { next: '', previous: '', first: '', last: '' };
+    const proto = firstString(req.headers['x-forwarded-proto']) || 'http';
+    const base = `${proto}://${req.headers.host}`;
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
+
+    const listUrl = `${base}/v3/${domain}/events${query}`;
+    const selfUrl = `${base}${req.originalUrl}`;
+
+    const paging = {
+      next: selfUrl,
+      previous: listUrl,
+      first: listUrl,
+      last: listUrl,
+    };
 
     const lastRow = rows[rows.length - 1];
     if (rows.length === limit && lastRow) {
       const nextCursor = Buffer.from(
         JSON.stringify({ t: lastRow.timestamp, id: lastRow.id }),
       ).toString('base64');
-      const proto = firstString(req.headers['x-forwarded-proto']) || 'http';
-      paging.next = `${proto}://${req.headers.host}/v3/${domain}/events/${nextCursor}`;
+      paging.next = `${base}/v3/${domain}/events/${nextCursor}`;
     }
 
     res.json({ items, paging });
