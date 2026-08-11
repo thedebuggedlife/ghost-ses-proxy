@@ -24,6 +24,8 @@ import { makeDeps, type TestDeps } from '../helpers/deps';
 
 const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
 const HOST = 'localhost:3003';
+const EVENTS_URL = `http://${HOST}/v3/example.com/events`;
+const CURSOR_TOKEN = 'eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=';
 
 interface EventsBody {
   items: {
@@ -314,6 +316,47 @@ describe('GET /v3/:domain/events', () => {
     expect(paging.last).toBe(
       'https://localhost:3003/v3/example.com/events?limit=3',
     );
+  });
+
+  it('every paging value survives new URL() — mailgun.js 10.x parsePage', async () => {
+    const responses = await Promise.all([
+      get('/v3/example.com/events'),
+      get('/v3/example.com/events?limit=3'),
+      get(`/v3/example.com/events/${CURSOR_TOKEN}`),
+    ]);
+
+    for (const { status, body } of responses) {
+      expect(status).toBe(200);
+      for (const value of Object.values(body.paging)) {
+        expect(() => new URL(value)).not.toThrow();
+      }
+    }
+  });
+
+  it('returns the request URL including the page token as a short page next', async () => {
+    const { body } = await get(`/v3/example.com/events/${CURSOR_TOKEN}`);
+
+    expect(body.items).toHaveLength(4);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${CURSOR_TOKEN}`);
+  });
+
+  it('drops the page token from previous, first and last', async () => {
+    const { body } = await get(`/v3/example.com/events/${CURSOR_TOKEN}`);
+
+    expect(body.paging.previous).toBe(EVENTS_URL);
+    expect(body.paging.first).toBe(EVENTS_URL);
+    expect(body.paging.last).toBe(EVENTS_URL);
+  });
+
+  it('keeps the query string in every paging URL of a token-less request', async () => {
+    const { body } = await get('/v3/example.com/events?event=failed');
+
+    expect(body.paging).toEqual({
+      next: `${EVENTS_URL}?event=failed`,
+      previous: `${EVENTS_URL}?event=failed`,
+      first: `${EVENTS_URL}?event=failed`,
+      last: `${EVENTS_URL}?event=failed`,
+    });
   });
 
   it('returns 400 for an invalid page token', async () => {
