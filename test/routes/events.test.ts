@@ -318,11 +318,30 @@ describe('GET /v3/:domain/events', () => {
     );
   });
 
+  it('takes the first hop of a comma-joined x-forwarded-proto', async () => {
+    const res = await request(server)
+      .get('/v3/example.com/events?limit=3')
+      .set('Authorization', AUTH)
+      .set('Host', HOST)
+      .set('X-Forwarded-Proto', 'https, http');
+
+    const { paging } = res.body as EventsBody;
+
+    for (const value of Object.values(paging)) {
+      expect(value.startsWith('https://')).toBe(true);
+      expect(() => new URL(value)).not.toThrow();
+    }
+    expect(paging.next).toBe(
+      'https://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
+    );
+  });
+
   it('every paging value survives new URL() — mailgun.js 10.x parsePage', async () => {
     const responses = await Promise.all([
       get('/v3/example.com/events'),
       get('/v3/example.com/events?limit=3'),
       get(`/v3/example.com/events/${CURSOR_TOKEN}`),
+      get('/v3/example.com/events?event=nonexistent'),
     ]);
 
     for (const { status, body } of responses) {
@@ -331,6 +350,7 @@ describe('GET /v3/:domain/events', () => {
         expect(() => new URL(value)).not.toThrow();
       }
     }
+    expect(responses[3].body.items).toEqual([]);
   });
 
   it('returns the request URL including the page token as a short page next', async () => {

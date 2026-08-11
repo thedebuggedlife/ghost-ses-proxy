@@ -144,7 +144,9 @@ export function createEventsRoute(
       return item;
     });
 
-    const proto = firstString(req.headers['x-forwarded-proto']) || 'http';
+    const proto =
+      firstString(req.headers['x-forwarded-proto']).split(',')[0]?.trim() ||
+      'http';
     const base = `${proto}://${req.headers.host}`;
     const queryIndex = req.originalUrl.indexOf('?');
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
