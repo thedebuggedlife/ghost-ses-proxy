@@ -64,7 +64,7 @@
       }
     ],
     "paging": {
-      "next": "http://localhost:3003/v3/example.com/events?tags=bulk-email%20AND%20ghost-email",
+      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0",
       "previous": "http://localhost:3003/v3/example.com/events?tags=bulk-email%20AND%20ghost-email",
       "first": "http://localhost:3003/v3/example.com/events?tags=bulk-email%20AND%20ghost-email",
       "last": "http://localhost:3003/v3/example.com/events?tags=bulk-email%20AND%20ghost-email"

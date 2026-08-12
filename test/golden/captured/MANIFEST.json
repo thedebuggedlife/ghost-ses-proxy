@@ -16,7 +16,8 @@
   },
   "reproducibilityCaveat": "scripts/Dockerfile.capture installs from the semver ranges in package.json with no lockfile — package-lock.json does not exist until Phase 3 — so `git checkout 36845e99ea56e150f7a7d2d09dd7536b9b6bf3bb && docker build -f scripts/Dockerfile.capture . && docker run ...` resolves whatever satisfies those ranges at the time it is run, not necessarily the versions recorded in dependencyVersions. The versions above are the resolved set the capture actually ran against; pin them if an exact regeneration is ever required. Note also that MANIFEST.json is written by hand and is not produced by the harness, so it is expected to be the only extra file when diffing a fresh capture against test/golden/captured.",
   "deviations": [
-    "http-events-*.json paging blocks hand-edited post-capture per issue #12 — legacy empty-string paging crashes mailgun.js 10.x parsePageLinks; no longer reproducible from the capture harness"
+    "http-events-*.json paging blocks hand-edited post-capture per issue #12 — legacy empty-string paging crashes mailgun.js 10.x parsePageLinks; no longer reproducible from the capture harness",
+    "http-events-*.json paging.next hand-edited again per issue #15 — next is now always a cursor URL (short and empty pages included) and emitted tokens are base64url without padding, so mailgun.js split('/').pop() token extraction round-trips; request paths keep their original padded tokens to pin decode backward compatibility"
   ],
   "roles": {
     "input": "Written by the harness as the exact input it fed the legacy implementation. Recorded RAW (not normalized) so it can be replayed verbatim; see Phase 0 Observations, Deviation 1.",
