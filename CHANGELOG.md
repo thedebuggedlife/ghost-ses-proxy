@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.3.2...v1.3.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* Always end events paging.next in a cursor token ([#16](https://github.com/thedebuggedlife/ghost-ses-proxy/issues/16)) ([6379975](https://github.com/thedebuggedlife/ghost-ses-proxy/commit/6379975ede07ed0b820b6922266302917e0bb63f))
+
 ## [1.3.2](https://github.com/thedebuggedlife/ghost-ses-proxy/compare/v1.3.1...v1.3.2) (2026-08-11)
 
 
