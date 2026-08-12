@@ -30,6 +30,7 @@ const T1 = 'eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0';
 const T3 = 'eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0';
 const T4 = 'eyJ0IjoxNzUwMDAwMDA0LCJpZCI6ImV2dC0wMDA0In0';
 const T7 = 'eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0';
+const T0 = 'eyJ0IjowLCJpZCI6IiJ9';
 
 interface EventsBody {
   items: {
@@ -377,6 +378,61 @@ describe('GET /v3/:domain/events', () => {
       first: `${EVENTS_URL}?event=failed`,
       last: `${EVENTS_URL}?event=failed`,
     });
+  });
+
+  it('round-trips a short-page next through mailgun.js token extraction', async () => {
+    const { body } = await get('/v3/example.com/events?event=failed');
+
+    const token = body.paging.next.split('/').pop();
+    const followed = await get(
+      `/v3/example.com/events/${token}?event=failed`,
+    );
+
+    expect(followed.status).toBe(200);
+    expect(followed.body.items).toEqual([]);
+  });
+
+  it('emits a begin-bound cursor as next on a token-less empty page', async () => {
+    const { body } = await get('/v3/example.com/events?event=nonexistent');
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${T0}`);
+
+    const followed = await get(
+      `/v3/example.com/events/${T0}?event=nonexistent`,
+    );
+
+    expect(followed.status).toBe(200);
+    expect(followed.body.items).toEqual([]);
+  });
+
+  it('echoes the request token as next on an empty page', async () => {
+    const { body } = await get(`/v3/example.com/events/${T7}`);
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
+  });
+
+  it('ANDs query filters with the cursor on a token request', async () => {
+    const { status, body } = await get(
+      `/v3/example.com/events/${T3}?event=failed`,
+    );
+
+    expect(status).toBe(200);
+    expect(ids(body)).toEqual(['evt-0004']);
+  });
+
+  it('emits path-safe unpadded base64url tokens in every response shape', async () => {
+    const responses = await Promise.all([
+      get('/v3/example.com/events'),
+      get('/v3/example.com/events?limit=3'),
+      get('/v3/example.com/events?event=nonexistent'),
+      get(`/v3/example.com/events/${T7}`),
+    ]);
+
+    for (const { body } of responses) {
+      expect(body.paging.next.split('/').pop()).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
   });
 
   it('returns 400 for an invalid page token', async () => {
