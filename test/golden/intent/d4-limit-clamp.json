@@ -18,8 +18,8 @@
         "status": 200,
         "effectiveLimit": 1000,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=99999999",
-        "pagingNextNote": "rows.length (7) !== effectiveLimit (1000), so no cursor is emitted; paging.next is the request's own URL instead (issue #12 — every paging value must be an absolute URL)."
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0",
+        "pagingNextNote": "A cursor over the last returned row (evt-0007) is now always emitted regardless of rows.length vs effectiveLimit (issue #15 — next must always end in a path-segment cursor token)."
       }
     },
     {
@@ -29,7 +29,7 @@
         "status": 200,
         "effectiveLimit": 1000,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=1000"
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0"
       }
     },
     {
@@ -39,8 +39,8 @@
         "status": 200,
         "effectiveLimit": 1,
         "itemIds": ["evt-0001"],
-        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0=",
-        "pagingNextNote": "rows.length (1) === effectiveLimit (1), so a cursor over evt-0001 is emitted. paging.next is never normalized (design §8.4); the Host header must be pinned to localhost:3003 — Design Decision P8."
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0",
+        "pagingNextNote": "A cursor over evt-0001 is emitted (issue #15 — a cursor is always emitted; tokens are base64url, unpadded). paging.next is never normalized (design §8.4); the Host header must be pinned to localhost:3003 — Design Decision P8."
       }
     },
     {
@@ -50,7 +50,7 @@
         "status": 200,
         "effectiveLimit": 1,
         "itemIds": ["evt-0001"],
-        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0="
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0"
       }
     },
     {
@@ -61,7 +61,7 @@
         "status": 200,
         "effectiveLimit": 300,
         "itemIds": ["evt-0001", "evt-0002", "evt-0003", "evt-0004", "evt-0005", "evt-0006", "evt-0007"],
-        "pagingNext": "http://localhost:3003/v3/example.com/events?limit=abc"
+        "pagingNext": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0"
       }
     }
   ]

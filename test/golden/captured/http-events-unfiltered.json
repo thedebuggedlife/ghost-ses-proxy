@@ -133,7 +133,7 @@
       }
     ],
     "paging": {
-      "next": "http://localhost:3003/v3/example.com/events",
+      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0",
       "previous": "http://localhost:3003/v3/example.com/events",
       "first": "http://localhost:3003/v3/example.com/events",
       "last": "http://localhost:3003/v3/example.com/events"

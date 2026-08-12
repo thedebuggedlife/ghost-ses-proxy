@@ -152,22 +152,21 @@ export function createEventsRoute(
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
 
     const listUrl = `${base}/v3/${domain}/events${query}`;
-    const selfUrl = `${base}${req.originalUrl}`;
+
+    const lastRow = rows[rows.length - 1];
+    const nextToken = lastRow
+      ? Buffer.from(
+          JSON.stringify({ t: lastRow.timestamp, id: lastRow.id }),
+        ).toString('base64url')
+      : pageToken ??
+        Buffer.from(JSON.stringify({ t: begin, id: '' })).toString('base64url');
 
     const paging = {
-      next: selfUrl,
+      next: `${base}/v3/${domain}/events/${nextToken}`,
       previous: listUrl,
       first: listUrl,
       last: listUrl,
     };
-
-    const lastRow = rows[rows.length - 1];
-    if (rows.length === limit && lastRow) {
-      const nextCursor = Buffer.from(
-        JSON.stringify({ t: lastRow.timestamp, id: lastRow.id }),
-      ).toString('base64');
-      paging.next = `${base}/v3/${domain}/events/${nextCursor}`;
-    }
 
     res.json({ items, paging });
   };

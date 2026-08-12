@@ -64,7 +64,7 @@
       }
     ],
     "paging": {
-      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=",
+      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0",
       "previous": "http://localhost:3003/v3/example.com/events?limit=3",
       "first": "http://localhost:3003/v3/example.com/events?limit=3",
       "last": "http://localhost:3003/v3/example.com/events?limit=3"

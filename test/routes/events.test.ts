@@ -26,6 +26,12 @@ const AUTH = `Basic ${Buffer.from('api:test-key', 'utf8').toString('base64')}`;
 const HOST = 'localhost:3003';
 const EVENTS_URL = `http://${HOST}/v3/example.com/events`;
 const CURSOR_TOKEN = 'eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=';
+const T1 = 'eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0';
+const T3 = 'eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0';
+const T4 = 'eyJ0IjoxNzUwMDAwMDA0LCJpZCI6ImV2dC0wMDA0In0';
+const T7 = 'eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0';
+const T0 = 'eyJ0IjowLCJpZCI6IiJ9';
+const PADDED = 'eyJ0IjoxNzUwMDAwMDA4LCJpZCI6Inp6In0=';
 
 interface EventsBody {
   items: {
@@ -101,7 +107,7 @@ describe('GET /v3/:domain/events', () => {
       'evt-0007',
     ]);
     expect(body.paging).toEqual({
-      next: 'http://localhost:3003/v3/example.com/events',
+      next: `${EVENTS_URL}/${T7}`,
       previous: 'http://localhost:3003/v3/example.com/events',
       first: 'http://localhost:3003/v3/example.com/events',
       last: 'http://localhost:3003/v3/example.com/events',
@@ -250,9 +256,7 @@ describe('GET /v3/:domain/events', () => {
     const first = await get('/v3/example.com/events?limit=3');
 
     expect(ids(first.body)).toEqual(['evt-0001', 'evt-0002', 'evt-0003']);
-    expect(first.body.paging.next).toBe(
-      'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
-    );
+    expect(first.body.paging.next).toBe(`${EVENTS_URL}/${T3}`);
     expect(first.body.paging.previous).toBe(
       'http://localhost:3003/v3/example.com/events?limit=3',
     );
@@ -272,9 +276,7 @@ describe('GET /v3/:domain/events', () => {
       'evt-0006',
       'evt-0007',
     ]);
-    expect(second.body.paging.next).toBe(
-      'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
-    );
+    expect(second.body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
     expect(second.body.paging.previous).toBe(
       'http://localhost:3003/v3/example.com/events',
     );
@@ -305,7 +307,7 @@ describe('GET /v3/:domain/events', () => {
     const { paging } = res.body as EventsBody;
 
     expect(paging.next).toBe(
-      'https://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
+      `https://localhost:3003/v3/example.com/events/${T3}`,
     );
     expect(paging.previous).toBe(
       'https://localhost:3003/v3/example.com/events?limit=3',
@@ -332,7 +334,7 @@ describe('GET /v3/:domain/events', () => {
       expect(() => new URL(value)).not.toThrow();
     }
     expect(paging.next).toBe(
-      'https://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0=',
+      `https://localhost:3003/v3/example.com/events/${T3}`,
     );
   });
 
@@ -353,11 +355,11 @@ describe('GET /v3/:domain/events', () => {
     expect(responses[3].body.items).toEqual([]);
   });
 
-  it('returns the request URL including the page token as a short page next', async () => {
+  it('returns a cursor over its own last row as a short page next on a token request', async () => {
     const { body } = await get(`/v3/example.com/events/${CURSOR_TOKEN}`);
 
     expect(body.items).toHaveLength(4);
-    expect(body.paging.next).toBe(`${EVENTS_URL}/${CURSOR_TOKEN}`);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
   });
 
   it('drops the page token from previous, first and last', async () => {
@@ -368,15 +370,78 @@ describe('GET /v3/:domain/events', () => {
     expect(body.paging.last).toBe(EVENTS_URL);
   });
 
-  it('keeps the query string in every paging URL of a token-less request', async () => {
+  it('keeps the query string in previous, first and last but not in the cursor next', async () => {
     const { body } = await get('/v3/example.com/events?event=failed');
 
     expect(body.paging).toEqual({
-      next: `${EVENTS_URL}?event=failed`,
+      next: `${EVENTS_URL}/${T4}`,
       previous: `${EVENTS_URL}?event=failed`,
       first: `${EVENTS_URL}?event=failed`,
       last: `${EVENTS_URL}?event=failed`,
     });
+  });
+
+  it('round-trips a short-page next through mailgun.js token extraction', async () => {
+    const { body } = await get('/v3/example.com/events?event=failed');
+
+    const token = body.paging.next.split('/').pop();
+    const followed = await get(
+      `/v3/example.com/events/${token}?event=failed`,
+    );
+
+    expect(followed.status).toBe(200);
+    expect(followed.body.items).toEqual([]);
+  });
+
+  it('emits a begin-bound cursor as next on a token-less empty page', async () => {
+    const { body } = await get('/v3/example.com/events?event=nonexistent');
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${T0}`);
+
+    const followed = await get(
+      `/v3/example.com/events/${T0}?event=nonexistent`,
+    );
+
+    expect(followed.status).toBe(200);
+    expect(followed.body.items).toEqual([]);
+  });
+
+  it('echoes the request token as next on an empty page', async () => {
+    const { body } = await get(`/v3/example.com/events/${T7}`);
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
+  });
+
+  it('echoes a padded v1.3.2 request token as next on an empty page', async () => {
+    const { body } = await get(`/v3/example.com/events/${PADDED}`);
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${PADDED}`);
+    expect(() => new URL(body.paging.next)).not.toThrow();
+  });
+
+  it('ANDs query filters with the cursor on a token request', async () => {
+    const { status, body } = await get(
+      `/v3/example.com/events/${T3}?event=failed`,
+    );
+
+    expect(status).toBe(200);
+    expect(ids(body)).toEqual(['evt-0004']);
+  });
+
+  it('emits path-safe unpadded base64url tokens in every response shape', async () => {
+    const responses = await Promise.all([
+      get('/v3/example.com/events'),
+      get('/v3/example.com/events?limit=3'),
+      get('/v3/example.com/events?event=nonexistent'),
+      get(`/v3/example.com/events/${T7}`),
+    ]);
+
+    for (const { body } of responses) {
+      expect(body.paging.next.split('/').pop()).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
   });
 
   it('returns 400 for an invalid page token', async () => {
@@ -467,45 +532,35 @@ describe('GET /v3/:domain/events', () => {
 
       expect(status).toBe(200);
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe(
-        'http://localhost:3003/v3/example.com/events?limit=99999999',
-      );
+      expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
     });
 
     it('accepts the maximum verbatim', async () => {
       const { body } = await get('/v3/example.com/events?limit=1000');
 
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe(
-        'http://localhost:3003/v3/example.com/events?limit=1000',
-      );
+      expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
     });
 
     it('clamps limit=0 up to 1', async () => {
       const { body } = await get('/v3/example.com/events?limit=0');
 
       expect(ids(body)).toEqual(['evt-0001']);
-      expect(body.paging.next).toBe(
-        'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0=',
-      );
+      expect(body.paging.next).toBe(`${EVENTS_URL}/${T1}`);
     });
 
     it('clamps a negative limit up to 1', async () => {
       const { body } = await get('/v3/example.com/events?limit=-5');
 
       expect(ids(body)).toEqual(['evt-0001']);
-      expect(body.paging.next).toBe(
-        'http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDAxLCJpZCI6ImV2dC0wMDAxIn0=',
-      );
+      expect(body.paging.next).toBe(`${EVENTS_URL}/${T1}`);
     });
 
     it('falls back to the 300 default for a non-numeric limit', async () => {
       const { body } = await get('/v3/example.com/events?limit=abc');
 
       expect(body.items).toHaveLength(7);
-      expect(body.paging.next).toBe(
-        'http://localhost:3003/v3/example.com/events?limit=abc',
-      );
+      expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
     });
   });
 });

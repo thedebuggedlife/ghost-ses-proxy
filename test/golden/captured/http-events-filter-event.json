@@ -91,7 +91,7 @@
       }
     ],
     "paging": {
-      "next": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
+      "next": "http://localhost:3003/v3/example.com/events/eyJ0IjoxNzUwMDAwMDA1LCJpZCI6ImV2dC0wMDA1In0",
       "previous": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
       "first": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed",
       "last": "http://localhost:3003/v3/example.com/events?event=delivered%20OR%20failed"
