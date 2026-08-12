@@ -31,6 +31,7 @@ const T3 = 'eyJ0IjoxNzUwMDAwMDAzLCJpZCI6ImV2dC0wMDAzIn0';
 const T4 = 'eyJ0IjoxNzUwMDAwMDA0LCJpZCI6ImV2dC0wMDA0In0';
 const T7 = 'eyJ0IjoxNzUwMDAwMDA3LCJpZCI6ImV2dC0wMDA3In0';
 const T0 = 'eyJ0IjowLCJpZCI6IiJ9';
+const PADDED = 'eyJ0IjoxNzUwMDAwMDA4LCJpZCI6Inp6In0=';
 
 interface EventsBody {
   items: {
@@ -411,6 +412,14 @@ describe('GET /v3/:domain/events', () => {
 
     expect(body.items).toEqual([]);
     expect(body.paging.next).toBe(`${EVENTS_URL}/${T7}`);
+  });
+
+  it('echoes a padded v1.3.2 request token as next on an empty page', async () => {
+    const { body } = await get(`/v3/example.com/events/${PADDED}`);
+
+    expect(body.items).toEqual([]);
+    expect(body.paging.next).toBe(`${EVENTS_URL}/${PADDED}`);
+    expect(() => new URL(body.paging.next)).not.toThrow();
   });
 
   it('ANDs query filters with the cursor on a token request', async () => {
